@@ -16,14 +16,14 @@ del "!! EXTRACT ALL FILES TO GAME FOLDER !!" 2>nul
 
 setlocal enabledelayedexpansion
 
-if not exist nvngx.dll (
-    echo OptiScaler "nvngx.dll" file is not found!
+if not exist OptiScaler.dll (
+    echo OptiScaler "OptiScaler.dll" file is not found!
     goto end
 )
 
 REM Set paths based on current directory
 set "gamePath=%~dp0"
-set "optiScalerFile=%gamePath%\nvngx.dll"
+set "optiScalerFile=%gamePath%\OptiScaler.dll"
 set setupSuccess=false
 
 REM Check if the Engine folder exists
@@ -48,10 +48,11 @@ echo Choose a filename for OptiScaler (default is dxgi.dll):
 echo  [1] dxgi.dll
 echo  [2] winmm.dll
 echo  [3] version.dll
-echo  [4] wininet.dll
-echo  [5] winhttp.dll
-echo  [6] OptiScaler.asi
-set /p filenameChoice="Enter 1-6 (or press Enter for default): "
+echo  [4] dbghelp.dll
+echo  [5] wininet.dll
+echo  [6] winhttp.dll
+echo  [7] OptiScaler.asi
+set /p filenameChoice="Enter 1-7 (or press Enter for default): "
 
 if "%filenameChoice%"=="" (
     set selectedFilename="dxgi.dll"
@@ -62,10 +63,12 @@ if "%filenameChoice%"=="" (
 ) else if "%filenameChoice%"=="3" (
     set selectedFilename="version.dll"
 ) else if "%filenameChoice%"=="4" (
-    set selectedFilename="wininet.dll"
+    set selectedFilename="dbghelp.dll"
 ) else if "%filenameChoice%"=="5" (
-    set selectedFilename="winhttp.dll"
+    set selectedFilename="wininet.dll"
 ) else if "%filenameChoice%"=="6" (
+    set selectedFilename="winhttp.dll"
+) else if "%filenameChoice%"=="7" (
     set selectedFilename="OptiScaler.asi"
 ) else (
     echo Invalid choice. Please select a valid option.
@@ -138,6 +141,24 @@ if "%gpuChoice%"=="2" (
 )
 
 :checkFile
+REM Query user for DLSS
+echo.
+echo Will you try to use DLSS inputs?
+echo [1] Yes
+echo [2] No
+set /p copyNvngx="Enter 1 or 2 (or press Enter for Yes): "
+
+if "%copyNvngx%"=="2" (
+    echo Skipping "nvngx_dlss.dll"...
+    goto completeSetup
+) else if NOT "%copyNvngx%"=="1" (
+    if NOT "%copyNvngx%"=="" (
+        echo.
+        echo Invalid choice. Please enter 1 or 2.
+        goto checkFile
+    )
+)
+
 set dlssFile = 
 goto check_nvngx_dlss
 :resume_nvngx_dlss
@@ -169,13 +190,15 @@ if errorlevel 1 (
 )
 
 REM Rename nvngx_dlss.dll file if AMD/Intel is selected
-if "%gpuChoice%"=="1" (
-    echo Renaming "nvngx_dlss_copy.dll" file to "nvngx.dll"...
-    rename nvngx_dlss_copy.dll nvngx.dll
-    if errorlevel 1 (
-        echo.
-        echo ERROR: Failed to rename "nvngx_dlss.dll" to "nvngx.dll".
-        goto end
+if NOT "%copyNvngx%"=="2" (
+    if "%gpuChoice%"=="1" (
+        echo Renaming "nvngx_dlss_copy.dll" file to "nvngx.dll"...
+        rename nvngx_dlss_copy.dll nvngx.dll
+        if errorlevel 1 (
+            echo.
+            echo ERROR: Failed to rename "nvngx_dlss.dll" to "nvngx.dll".
+            goto end
+        )
     )
 )
 
@@ -237,6 +260,18 @@ if exist Win64 (
         set dlssFile=%%F
         goto fileFound
     )
+) else (
+    if exist WinGDK (
+    echo.
+    echo Going to root folder of Unreal Engine game and searching again
+    cd ..
+    cd ..
+
+    for /f "delims=" %%F in ('dir /s /b %fileToSearch% 2^>nul') do (
+        set dlssFile=%%F
+        goto fileFound
+    )
+)
 )
 
 :fileNotFound
@@ -269,12 +304,16 @@ echo.
 echo set /p removeChoice="Do you want to remove OptiScaler? [y/n]: "
 echo.
 echo if "%%removeChoice%%"=="y" ^(
-if "%gpuChoice%"=="1" (
-    echo    del nvngx.dll
+if NOT "%copyNvngx%"=="2" (
+    if "%gpuChoice%"=="1" (
+        echo    del nvngx.dll
+    )
 )
 echo    del OptiScaler.log
 echo    del OptiScaler.ini
 echo    del %selectedFilename%
+echo    del /Q D3D12_Optiscaler\*
+echo    rd D3D12_Optiscaler
 echo    del /Q DlssOverrides\*
 echo    rd DlssOverrides
 echo    del /Q Licenses\*

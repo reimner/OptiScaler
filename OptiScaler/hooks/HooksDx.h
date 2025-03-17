@@ -61,9 +61,9 @@ namespace HooksDx
     inline ID3D12CommandQueue* gameCommandQueue = nullptr;
 
     void UnHookDx();
-    void HookDx11();
-    void HookDx12();
-    void HookDxgi();
+    void HookDx11(HMODULE dx11Module);
+    void HookDx12(HMODULE dx12Module);
+    void HookDxgi(HMODULE dxgiModule);
     DXGI_FORMAT CurrentSwapchainFormat();
 }
 
@@ -81,6 +81,9 @@ namespace FrameGen_Dx12
     inline float meterFactor = 0.0;
     inline float ftDelta = 0.0;
     inline UINT reset = 0;
+    
+    inline UINT maxRenderWidth = 0;
+    inline UINT maxRenderHeight = 0;
 
     inline ID3D12Resource* paramVelocity[HooksDx::FG_BUFFER_SIZE] = { nullptr, nullptr, nullptr, nullptr };
     inline ID3D12Resource* paramDepth[HooksDx::FG_BUFFER_SIZE] = { nullptr, nullptr, nullptr, nullptr };

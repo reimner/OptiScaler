@@ -1,3 +1,4 @@
+#pragma once
 #include <pch.h>
 #include <Config.h>
 
@@ -14,7 +15,7 @@ bool XeSSFeatureDx12::Init(ID3D12Device* InDevice, ID3D12GraphicsCommandList* In
 
 	if (InitXeSS(InDevice, InParameters))
 	{
-		if (!Config::Instance()->OverlayMenu.value_or_default() && (Imgui == nullptr || Imgui.get() == nullptr))
+		if (!Config::Instance()->OverlayMenu.value_or(true) && (Imgui == nullptr || Imgui.get() == nullptr))
 			Imgui = std::make_unique<Menu_Dx12>(Util::GetProcessWindow(), InDevice);
 
 		OutputScaler = std::make_unique<OS_Dx12>("Output Scaling", InDevice, (TargetWidth() < DisplayWidth()));
@@ -38,10 +39,10 @@ bool XeSSFeatureDx12::Evaluate(ID3D12GraphicsCommandList* InCommandList, NVSDK_N
 	}
 
 	if (!RCAS->IsInit())
-		Config::Instance()->RcasEnabled.set_volatile_value(false);
+		Config::Instance()->RcasEnabled = false;
 
 	if (!OutputScaler->IsInit())
-		Config::Instance()->OutputScalingEnabled.set_volatile_value(false);
+		Config::Instance()->OutputScalingEnabled = false;
 
 	if (State::Instance().xessDebug)
 	{
@@ -76,9 +77,9 @@ bool XeSSFeatureDx12::Evaluate(ID3D12GraphicsCommandList* InCommandList, NVSDK_N
 
 	auto sharpness = GetSharpness(InParameters);
 
-	float ssMulti = Config::Instance()->OutputScalingMultiplier.value_or_default();
+	float ssMulti = Config::Instance()->OutputScalingMultiplier.value_or(1.5f);
 
-	bool useSS = Config::Instance()->OutputScalingEnabled.value_or_default() && !Config::Instance()->DisplayResolution.value_or(false);
+	bool useSS = Config::Instance()->OutputScalingEnabled.value_or(false) && !Config::Instance()->DisplayResolution.value_or(false);
 
 	LOG_DEBUG("Input Resolution: {0}x{1}", params.inputWidth, params.inputHeight);
 
@@ -97,7 +98,7 @@ bool XeSSFeatureDx12::Evaluate(ID3D12GraphicsCommandList* InCommandList, NVSDK_N
 		}
 		else if (State::Instance().NVNGX_Engine == NVSDK_NGX_ENGINE_TYPE_UNREAL)
 		{
-			Config::Instance()->ColorResourceBarrier.set_volatile_value(D3D12_RESOURCE_STATE_RENDER_TARGET);
+			Config::Instance()->ColorResourceBarrier = (int)D3D12_RESOURCE_STATE_RENDER_TARGET;
 			ResourceBarrier(InCommandList, paramColor, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
 		}
 
@@ -123,7 +124,7 @@ bool XeSSFeatureDx12::Evaluate(ID3D12GraphicsCommandList* InCommandList, NVSDK_N
 		}
 		else if (State::Instance().NVNGX_Engine == NVSDK_NGX_ENGINE_TYPE_UNREAL)
 		{
-			Config::Instance()->MVResourceBarrier.set_volatile_value(D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+			Config::Instance()->MVResourceBarrier = (int)D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
 			ResourceBarrier(InCommandList, params.pVelocityTexture, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
 		}
 
@@ -136,12 +137,12 @@ bool XeSSFeatureDx12::Evaluate(ID3D12GraphicsCommandList* InCommandList, NVSDK_N
 			if (displaySizeEnabled && lowResMV)
 			{
 				LOG_WARN("MotionVectors MVWidth: {0}, DisplayWidth: {1}, Flag: {2} Disabling DisplaySizeMV!!", desc.Width, DisplayWidth(), displaySizeEnabled);
-				Config::Instance()->DisplayResolution.set_volatile_value(false);
-				State::Instance().changeBackend = true;
+				Config::Instance()->DisplayResolution = false;
+				State::Instance().changeBackend[_handle->Id] = true;
 				return true;
 			}
 
-			Config::Instance()->DisplayResolution.set_volatile_value(displaySizeEnabled);
+			Config::Instance()->DisplayResolution = displaySizeEnabled;
 		}
 	}
 	else
@@ -179,7 +180,7 @@ bool XeSSFeatureDx12::Evaluate(ID3D12GraphicsCommandList* InCommandList, NVSDK_N
 			params.pOutputTexture = paramOutput;
 
 		if (Config::Instance()->RcasEnabled.value_or(true) && 
-			(sharpness > 0.0f || (Config::Instance()->MotionSharpnessEnabled.value_or_default() && Config::Instance()->MotionSharpness.value_or_default() > 0.0f)) &&
+			(sharpness > 0.0f || (Config::Instance()->MotionSharpnessEnabled.value_or(false) && Config::Instance()->MotionSharpness.value_or(0.4) > 0.0f)) &&
 			RCAS->IsInit() && RCAS->CreateBufferResource(Device, params.pOutputTexture, D3D12_RESOURCE_STATE_UNORDERED_ACCESS))
 		{
 			RCAS->SetBufferState(InCommandList, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
@@ -229,8 +230,8 @@ bool XeSSFeatureDx12::Evaluate(ID3D12GraphicsCommandList* InCommandList, NVSDK_N
 		else
 		{
 			LOG_WARN("AutoExposure disabled but ExposureTexture is not exist, it may cause problems!!");
-			Config::Instance()->AutoExposure.set_volatile_value(true);
-			State::Instance().changeBackend = true;
+			Config::Instance()->AutoExposure = true;
+			State::Instance().changeBackend[_handle->Id] = true;
 			return true;
 		}
 	}
@@ -246,7 +247,7 @@ bool XeSSFeatureDx12::Evaluate(ID3D12GraphicsCommandList* InCommandList, NVSDK_N
 		if (paramReactiveMask)
 		{
 			LOG_DEBUG("Input Bias mask exist..");
-			Config::Instance()->DisableReactiveMask.set_volatile_value(false);
+			Config::Instance()->DisableReactiveMask = false;
 
 			if (Config::Instance()->MaskResourceBarrier.has_value())
 				ResourceBarrier(InCommandList, params.pResponsivePixelMaskTexture, (D3D12_RESOURCE_STATES)Config::Instance()->MaskResourceBarrier.value(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
@@ -266,8 +267,8 @@ bool XeSSFeatureDx12::Evaluate(ID3D12GraphicsCommandList* InCommandList, NVSDK_N
 		else
 		{
 			LOG_WARN("Bias mask not exist and its enabled in config, it may cause problems!!");
-			Config::Instance()->DisableReactiveMask.set_volatile_value(true);
-			State::Instance().changeBackend = true;
+			Config::Instance()->DisableReactiveMask = true;
+			State::Instance().changeBackend[_handle->Id] = true;
 			return true;
 		}
 	}
@@ -296,13 +297,6 @@ bool XeSSFeatureDx12::Evaluate(ID3D12GraphicsCommandList* InCommandList, NVSDK_N
 	else
 		LOG_WARN("Can't get motion vector scales!");
 
-    InParameters->Get(NVSDK_NGX_Parameter_DLSS_Input_Color_Subrect_Base_X, &params.inputColorBase.x);
-    InParameters->Get(NVSDK_NGX_Parameter_DLSS_Input_Color_Subrect_Base_Y, &params.inputColorBase.y);
-    InParameters->Get(NVSDK_NGX_Parameter_DLSS_Input_Depth_Subrect_Base_X, &params.inputDepthBase.x);
-    InParameters->Get(NVSDK_NGX_Parameter_DLSS_Input_Depth_Subrect_Base_Y, &params.inputDepthBase.y);
-    InParameters->Get(NVSDK_NGX_Parameter_DLSS_Input_MV_SubrectBase_X, &params.inputMotionVectorBase.x);
-    InParameters->Get(NVSDK_NGX_Parameter_DLSS_Input_MV_SubrectBase_Y, &params.inputMotionVectorBase.y);
-
 	LOG_DEBUG("Executing!!");
 	xessResult = XeSSProxy::D3D12Execute()(_xessContext, InCommandList, &params);
 
@@ -314,7 +308,7 @@ bool XeSSFeatureDx12::Evaluate(ID3D12GraphicsCommandList* InCommandList, NVSDK_N
 
 	// Apply RCAS
 	if (Config::Instance()->RcasEnabled.value_or(true) && 
-		(sharpness > 0.0f || (Config::Instance()->MotionSharpnessEnabled.value_or_default() && Config::Instance()->MotionSharpness.value_or_default() > 0.0f)) &&
+		(sharpness > 0.0f || (Config::Instance()->MotionSharpnessEnabled.value_or(false) && Config::Instance()->MotionSharpness.value_or(0.4) > 0.0f)) &&
 		RCAS->CanRender())
 	{
 		if (params.pOutputTexture != RCAS->Buffer())
@@ -337,7 +331,7 @@ bool XeSSFeatureDx12::Evaluate(ID3D12GraphicsCommandList* InCommandList, NVSDK_N
 		{
 			if (!RCAS->Dispatch(Device, InCommandList, params.pOutputTexture, params.pVelocityTexture, rcasConstants, OutputScaler->Buffer()))
 			{
-				Config::Instance()->RcasEnabled.set_volatile_value(false);
+				Config::Instance()->RcasEnabled = false;
 				return true;
 			}
 		}
@@ -345,7 +339,7 @@ bool XeSSFeatureDx12::Evaluate(ID3D12GraphicsCommandList* InCommandList, NVSDK_N
 		{
 			if (!RCAS->Dispatch(Device, InCommandList, params.pOutputTexture, params.pVelocityTexture, rcasConstants, paramOutput))
 			{
-				Config::Instance()->RcasEnabled.set_volatile_value(false);
+				Config::Instance()->RcasEnabled = false;
 				return true;
 			}
 		}
@@ -358,14 +352,14 @@ bool XeSSFeatureDx12::Evaluate(ID3D12GraphicsCommandList* InCommandList, NVSDK_N
 
 		if (!OutputScaler->Dispatch(Device, InCommandList, OutputScaler->Buffer(), paramOutput))
 		{
-			Config::Instance()->OutputScalingEnabled.set_volatile_value(false);
-			State::Instance().changeBackend = true;
+			Config::Instance()->OutputScalingEnabled = false;
+			State::Instance().changeBackend[_handle->Id] = true;
 			return true;
 		}
 	}
 
 	// imgui
-	if (!Config::Instance()->OverlayMenu.value_or_default() && _frameCount > 30)
+	if (!Config::Instance()->OverlayMenu.value_or(true) && _frameCount > 30)
 	{
 		if (Imgui != nullptr && Imgui.get() != nullptr)
 		{
@@ -421,4 +415,9 @@ bool XeSSFeatureDx12::Evaluate(ID3D12GraphicsCommandList* InCommandList, NVSDK_N
 
 XeSSFeatureDx12::~XeSSFeatureDx12()
 {
+	if (State::Instance().isShuttingDown)
+		return;
+
+	if (RCAS != nullptr && RCAS.get() != nullptr)
+		RCAS.reset();
 }

@@ -116,6 +116,16 @@ bool Config::Reload(std::filesystem::path iniPath)
             Fsr3xIndex.set_from_config(readInt("FSR", "UpscalerIndex"));
             FsrUseMaskForTransparency.set_from_config(readBool("FSR", "UseReactiveMaskForTransparency"));
             DlssReactiveMaskBias.set_from_config(readFloat("FSR", "DlssReactiveMaskBias"));
+            Fsr4Update.set_from_config(readBool("FSR", "Fsr4Update"));
+            FsrNonLinearPQ.set_from_config(readBool("FSR", "FsrNonLinearPQ"));
+            FsrNonLinearSRGB.set_from_config(readBool("FSR", "FsrNonLinearSRGB"));
+            FsrAgilitySDKUpgrade.set_from_config(readBool("FSR", "FsrAgilitySDKUpgrade"));
+
+            // Only sRGB or PQ should be enabled
+            if (FsrNonLinearPQ.has_value() && FsrNonLinearPQ.value())
+                FsrNonLinearSRGB = false;
+            else if (FsrNonLinearSRGB.has_value() && FsrNonLinearSRGB.value())
+                FsrNonLinearPQ = false;
         }
 
         // XeSS
@@ -131,6 +141,7 @@ bool Config::Reload(std::filesystem::path iniPath)
             // Don't enable again if set false because of no nvngx found
             DLSSEnabled.set_from_config(readBool("DLSS", "Enabled"));
             NvngxPath.set_from_config(readWString("DLSS", "LibraryPath"));
+            DLSSFeaturePath.set_from_config(readWString("DLSS", "FeaturePath"));
             NVNGX_DLSS_Library.set_from_config(readWString("DLSS", "NVNGX_DLSS_Path"));
 
             RenderPresetOverride.set_from_config(readBool("DLSS", "RenderPresetOverride"));
@@ -213,6 +224,7 @@ bool Config::Reload(std::filesystem::path iniPath)
             ShortcutKey.set_from_config(readInt("Menu", "ShortcutKey"));
             ExtendedLimits.set_from_config(readBool("Menu", "ExtendedLimits"));
             ShowFps.set_from_config(readBool("Menu", "ShowFps"));
+            UseHQFont.set_from_config(readBool("Menu", "UseHQFont"));
 
             if (auto setting = readInt("Menu", "FpsOverlayPos"); setting.has_value())
                 FpsOverlayPos.set_from_config(std::clamp(setting.value(), 0, 3));
@@ -308,12 +320,14 @@ bool Config::Reload(std::filesystem::path iniPath)
             MipmapBiasFixedOverride.set_from_config(readBool("Hotfix", "MipmapBiasFixedOverride"));
             MipmapBiasScaleOverride.set_from_config(readBool("Hotfix", "MipmapBiasScaleOverride"));
             MipmapBiasOverrideAll.set_from_config(readBool("Hotfix", "MipmapBiasOverrideAll"));
-
+            
             if (auto setting = readInt("Hotfix", "AnisotropyOverride"); setting.has_value() && setting.value() <= 16 && setting.value() >= 1)
                 AnisotropyOverride.set_from_config(setting);
 
             if (AnisotropyOverride.has_value() && (AnisotropyOverride.value() > 16 || AnisotropyOverride.value() < 1))
                 AnisotropyOverride.reset();
+
+            OverrideShaderSampler.set_from_config(readBool("Hotfix", "OverrideShaderSampler"));
 
             RestoreComputeSignature.set_from_config(readBool("Hotfix", "RestoreComputeSignature"));
             RestoreGraphicSignature.set_from_config(readBool("Hotfix", "RestoreGraphicSignature"));
@@ -600,6 +614,10 @@ bool Config::SaveIni()
         ini.SetValue("FSR", "UpscalerIndex", GetIntValue(Instance()->Fsr3xIndex.value_for_config()).c_str());
         ini.SetValue("FSR", "UseReactiveMaskForTransparency", GetBoolValue(Instance()->FsrUseMaskForTransparency.value_for_config()).c_str());
         ini.SetValue("FSR", "DlssReactiveMaskBias", GetFloatValue(Instance()->DlssReactiveMaskBias.value_for_config()).c_str());
+        ini.SetValue("FSR", "Fsr4Update", GetBoolValue(Instance()->Fsr4Update.value_for_config()).c_str());
+        ini.SetValue("FSR", "FsrNonLinearPQ", GetBoolValue(Instance()->FsrNonLinearPQ.value_for_config()).c_str());
+        ini.SetValue("FSR", "FsrNonLinearSRGB", GetBoolValue(Instance()->FsrNonLinearSRGB.value_for_config()).c_str());
+        ini.SetValue("FSR", "FsrAgilitySDKUpgrade", GetBoolValue(Instance()->FsrAgilitySDKUpgrade.value_for_config()).c_str());
     }
 
     // XeSS
@@ -614,6 +632,7 @@ bool Config::SaveIni()
     {
         ini.SetValue("DLSS", "Enabled", GetBoolValue(Instance()->DLSSEnabled.value_for_config()).c_str());
         ini.SetValue("DLSS", "LibraryPath", wstring_to_string(Instance()->NvngxPath.value_for_config_or(L"auto")).c_str());
+        ini.SetValue("DLSS", "FeaturePath", wstring_to_string(Instance()->DLSSFeaturePath.value_for_config_or(L"auto")).c_str());
         ini.SetValue("DLSS", "NVNGX_DLSS_Library", wstring_to_string(Instance()->NVNGX_DLSS_Library.value_for_config_or(L"auto")).c_str());
         ini.SetValue("DLSS", "RenderPresetOverride", GetBoolValue(Instance()->RenderPresetOverride.value_for_config()).c_str());
         ini.SetValue("DLSS", "RenderPresetForAll", GetIntValue(Instance()->RenderPresetForAll.value_for_config()).c_str());
@@ -643,6 +662,7 @@ bool Config::SaveIni()
         ini.SetValue("Menu", "ShortcutKey", GetIntValue(Instance()->ShortcutKey.value_for_config()).c_str());
         ini.SetValue("Menu", "ExtendedLimits", GetBoolValue(Instance()->ExtendedLimits.value_for_config()).c_str());
         ini.SetValue("Menu", "ShowFps", GetBoolValue(Instance()->ShowFps.value_for_config()).c_str());
+        ini.SetValue("Menu", "UseHQFont", GetBoolValue(Instance()->UseHQFont.value_for_config()).c_str());
         ini.SetValue("Menu", "FpsOverlayPos", GetIntValue(Instance()->FpsOverlayPos.value_for_config()).c_str());
         ini.SetValue("Menu", "FpsOverlayType", GetIntValue(Instance()->FpsOverlayType.value_for_config()).c_str());
         ini.SetValue("Menu", "FpsOverlayHorizontal", GetBoolValue(Instance()->FpsOverlayHorizontal.value_for_config()).c_str());
@@ -700,6 +720,8 @@ bool Config::SaveIni()
 
         ini.SetValue("Hotfix", "AnisotropyOverride", GetIntValue(Instance()->AnisotropyOverride.value_for_config()).c_str());
         ini.SetValue("Hotfix", "RoundInternalResolution", GetIntValue(Instance()->RoundInternalResolution.value_for_config()).c_str());
+        
+        ini.SetValue("Hotfix", "OverrideShaderSampler", GetBoolValue(Instance()->OverrideShaderSampler.value_for_config()).c_str());
 
         ini.SetValue("Hotfix", "RestoreComputeSignature", GetBoolValue(Instance()->RestoreComputeSignature.value_for_config()).c_str());
         ini.SetValue("Hotfix", "RestoreGraphicSignature", GetBoolValue(Instance()->RestoreGraphicSignature.value_for_config()).c_str());

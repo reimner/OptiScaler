@@ -51,10 +51,14 @@ static bool CreateDLSSContext(ffxContext handle, const ffxDispatchDescUpscale* p
     params->Set(NVSDK_NGX_Parameter_Height, pExecParams->renderSize.height);
     params->Set(NVSDK_NGX_Parameter_OutWidth, initParams->maxUpscaleSize.width);
     params->Set(NVSDK_NGX_Parameter_OutHeight, initParams->maxUpscaleSize.height);
+    params->Set("FSR.upscaleSize.width", pExecParams->upscaleSize.width);
+    params->Set("FSR.upscaleSize.height", pExecParams->upscaleSize.height);
 
-    auto ratio = (float)initParams->maxUpscaleSize.width / (float)pExecParams->renderSize.width;
+    auto width = pExecParams->upscaleSize.width > 0 ? pExecParams->upscaleSize.width : initParams->maxUpscaleSize.width;
 
-    LOG_INFO("renderWidth: {}, maxWidth: {}, ratio: {}", pExecParams->renderSize.width, initParams->maxUpscaleSize.width, ratio);
+    auto ratio = (float)width / (float)pExecParams->renderSize.width;
+
+    LOG_INFO("renderWidth: {}, maxWidth: {}, ratio: {}", pExecParams->renderSize.width, width, ratio);
 
     if (ratio <= 3.0)
         params->Set(NVSDK_NGX_Parameter_PerfQualityValue, NVSDK_NGX_PerfQuality_Value_UltraPerformance);
@@ -364,6 +368,8 @@ ffxReturnCode_t ffxDispatch_Dx12(ffxContext* context, ffxDispatchDescHeader* des
     params->Set("FSR.transparencyAndComposition", dispatchDesc->transparencyAndComposition.resource);
     params->Set("FSR.reactive", dispatchDesc->reactive.resource);
     params->Set(NVSDK_NGX_Parameter_Sharpness, dispatchDesc->sharpness);
+    params->Set("FSR.upscaleSize.width", dispatchDesc->upscaleSize.width);
+    params->Set("FSR.upscaleSize.height", dispatchDesc->upscaleSize.height);
 
     LOG_DEBUG("handle: {:X}, internalResolution: {}x{}", handle->Id, dispatchDesc->renderSize.width, dispatchDesc->renderSize.height);
 

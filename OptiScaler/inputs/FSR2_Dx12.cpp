@@ -374,7 +374,7 @@ static Fsr212::FfxErrorCode ffxFsr2ContextCreate_Dx12(Fsr212::FfxFsr2Context* co
 
     // if still no device use latest created one
     // Might fixed TLOU but FMF2 still crashes
-    if (_d3d12Device == nullptr && State::Instance().gameQuirk != FMF2 && State::Instance().d3d12Devices.size() > 0)
+    if (_d3d12Device == nullptr && State::Instance().d3d12Devices.size() > 0)
         _d3d12Device = State::Instance().d3d12Devices[State::Instance().d3d12Devices.size() - 1];
 
     if (_d3d12Device == nullptr)
@@ -681,7 +681,7 @@ static Fsr212::FfxErrorCode ffxFsr20ContextDispatch_Dx12(Fsr212::FfxFsr2Context*
 
     // HACK, DLSS thinks it's using dynamic res here and errors out when changing quality
     if (evalResult == NVSDK_NGX_Result_Fail && State::Instance().currentFeature->Name() == "DLSS")
-        State::Instance().changeBackend = true;
+        State::Instance().changeBackend[handle->Id] = true;
 
     LOG_ERROR("evalResult: {:X}", (UINT)evalResult);
     return Fsr212::FFX_ERROR_BACKEND_API_ERROR;
@@ -999,13 +999,20 @@ void HookFSR2ExeInputs()
             std::string_view createPattern("40 55 57 41 54 41 56 48 8D AC 24 ? ? ? ? 48 81 EC ? ? ? ? 48 8B 05 ? ? ? ? 48 33 C4 48 89 85 ? ? ? ? 4C 8B F2 41 B8 ? ? ? ? 33 D2 48 8B F9 E8");
             o_ffxFsr2ContextCreate_Pattern_Dx12 = (PFN_ffxFsr2ContextCreate)scanner::GetAddress(exeNameV, createPattern, 0);
 
-            // Witchfire
-            // Game uses FSR1 as FSR2
+            // Witchfire 
             //if (o_ffxFsr2ContextCreate_Pattern_Dx12 == nullptr)
             //{
             //    LOG_DEBUG("Checking createPatternWF");
             //    std::string_view createPatternWF("40 55 57 41 54 41 56 48 8D AC 24 ? ? ? ? 48 81 EC ? ? ? ? 48 8B 05 ? ? ? ? 48 33 C4 48 89 85 ? ? ? ? 4C 8B F2 41 B8 ? ? ? ? 33 D2 48 8B F9");
             //    o_ffxFsr2ContextCreate_Pattern_Dx12 = (PFN_ffxFsr2ContextCreate)scanner::GetAddress(exeNameV, createPatternWF, 0);
+            //}
+
+            // Ronin
+            //if (o_ffxFsr2ContextCreate_Pattern_Dx12 == nullptr)
+            //{
+            //    LOG_DEBUG("Checking createPatternRonin");
+            //    std::string_view createPatternRonin("40 55 57 41 55 41 57 48 8D AC 24 ? ? ? ? 48 81 EC ? ? ? ? 48 8B 05 ? ? ? ? 48 33 C4 48 89 85 ? ? ? ? 4C 8B EA 41 B8 ? ? ? ? 33 D2 48 8B F9");
+            //    o_ffxFsr2ContextCreate_Pattern_Dx12 = (PFN_ffxFsr2ContextCreate)scanner::GetAddress(exeNameV, createPatternRonin, 0);
             //}
 
             // AW2 
@@ -1021,8 +1028,7 @@ void HookFSR2ExeInputs()
 
             LOG_DEBUG("ffxFsr2ContextCreate_Pattern_Dx12: {:X}", (size_t)o_ffxFsr2ContextCreate_Pattern_Dx12);
 
-
-            if (o_ffxFsr2ContextCreate_Dx12 == nullptr && o_ffxFsr2ContextCreate_Pattern_Dx12)
+            if (o_ffxFsr2ContextCreate_Dx12 == nullptr && o_ffxFsr2ContextCreate_Pattern_Dx12 == nullptr)
             {
                 LOG_DEBUG("No CreateContext found, stopping pattern matching");
                 break;
@@ -1080,13 +1086,21 @@ void HookFSR2ExeInputs()
             //    o_ffxFsr2ContextDispatch_Pattern_Dx12 = (PFN_ffxFsr2ContextDispatch)scanner::GetAddress(exeNameV, dispatchPatternWF, 0);
             //}
 
-            // Banishers
-            // Custom implementation
+            // Ronin
             //if (o_ffxFsr2ContextDispatch_Pattern_Dx12 == nullptr)
             //{
-            //    std::string_view dispatchPatternBanish("40 55 56 57 48 8D AC 24 ? ? ? ? B8 ? ? ? ? E8 ? ? ? ? 48 2B E0 48 8B 05 ? ? ? ? 48 33 C4 48 89 85 ? ? ? ? F7 01 ? ? ? ? 48 8B F2 48 8B F9");
-            //    o_ffxFsr2ContextDispatch_Pattern_Dx12 = (PFN_ffxFsr2ContextDispatch)scanner::GetAddress(exeNameV, dispatchPatternBanish, 0);
+            //    LOG_DEBUG("Checking dispatchPatternRonin");
+            //    std::string_view dispatchPatternRonin("40 55 41 56 41 57 48 8D AC 24 ? ? ? ? B8 ? ? ? ? E8 ? ? ? ? 48 2B E0 F7 01 00 01 00 00 4C 8B FA 4C 8B F1 74 05 E8 ");
+            //    o_ffxFsr2ContextDispatch_Pattern_Dx12 = (PFN_ffxFsr2ContextDispatch)scanner::GetAddress(exeNameV, dispatchPatternRonin, 0);
             //}
+
+            // Banishers
+            // RHI implementation, needs r.FidelityFX.FSR2.UseNativeDX12=1
+            if (o_ffxFsr2ContextDispatch_Pattern_Dx12 == nullptr)
+            {
+                std::string_view dispatchPatternBanish("40 55 56 57 48 8D AC 24 ? ? ? ? B8 ? ? ? ? E8 ? ? ? ? 48 2B E0 48 8B 05 ? ? ? ? 48 33 C4 48 89 85 ? ? ? ? F7 01 ? ? ? ? 48 8B F2 48 8B F9");
+                o_ffxFsr2ContextDispatch_Pattern_Dx12 = (PFN_ffxFsr2ContextDispatch)scanner::GetAddress(exeNameV, dispatchPatternBanish, 0);
+            }
 
             // AW2 
             // Custom implementation

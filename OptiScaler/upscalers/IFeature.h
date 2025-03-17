@@ -3,7 +3,9 @@
 #include <nvsdk_ngx.h>
 #include <nvsdk_ngx_defs.h>
 
-inline static unsigned int handleCounter = 1000000;
+#define DLSS_MOD_ID_OFFSET 1000000
+
+inline static unsigned int handleCounter = DLSS_MOD_ID_OFFSET;
 
 class IFeature
 {
@@ -39,6 +41,7 @@ protected:
 	void SetHandle(unsigned int InHandleId);
 	bool SetInitParameters(NVSDK_NGX_Parameter* InParameters);
 	void GetRenderResolution(NVSDK_NGX_Parameter* InParameters, unsigned int* OutWidth, unsigned int* OutHeight);
+	void GetDynamicOutputResolution(NVSDK_NGX_Parameter* InParameters, unsigned int* width, unsigned int* height);
 	float GetSharpness(const NVSDK_NGX_Parameter* InParameters);
 
 	virtual void SetInit(bool InValue) { _isInited = InValue; }
@@ -49,6 +52,7 @@ public:
 
 	int GetFeatureFlags() const { return _featureFlags; }
 
+	bool UpdateOutputResolution(const NVSDK_NGX_Parameter* InParameters);
 	unsigned int DisplayWidth() const { return _displayWidth; };
 	unsigned int DisplayHeight() const { return _displayHeight; };
 	unsigned int TargetWidth() const { return _targetWidth; };

@@ -155,6 +155,7 @@ public:
 	CustomOptional<bool> DLSSEnabled{ true };
 	CustomOptional<std::wstring, NoDefault> NvngxPath;
 	CustomOptional<std::wstring, NoDefault> NVNGX_DLSS_Library;
+	CustomOptional<std::wstring, NoDefault> DLSSFeaturePath;
 	CustomOptional<bool> RenderPresetOverride{ false };
 	CustomOptional<uint32_t> RenderPresetForAll{ 0 };
 	CustomOptional<uint32_t> RenderPresetDLAA{ 0 };
@@ -191,6 +192,7 @@ public:
 	CustomOptional<int> FpsCycleShortcutKey{ VK_NEXT };
 	CustomOptional<bool> FpsOverlayHorizontal{ false };
 	CustomOptional<float> FpsOverlayAlpha{ 0.4f };
+	CustomOptional<bool> UseHQFont{ true };
 
 	// Hooks
 	CustomOptional<bool> HookOriginalNvngxOnly{ false };
@@ -218,6 +220,7 @@ public:
 	CustomOptional<bool> MipmapBiasScaleOverride{ false };
 	CustomOptional<bool> MipmapBiasOverrideAll{ false };
 	CustomOptional<int, NoDefault> AnisotropyOverride; // disabled by default
+	CustomOptional<bool> OverrideShaderSampler{ false };
 	CustomOptional<int, NoDefault> RoundInternalResolution; // disabled by default
 
 	CustomOptional<bool> RestoreComputeSignature{ false };
@@ -253,6 +256,10 @@ public:
 	CustomOptional<int> Fsr3xIndex{ 0 };
 	CustomOptional<bool> FsrUseMaskForTransparency{ true };
 	CustomOptional<float> FsrVelocity{ 1.0f };
+	CustomOptional<bool> Fsr4Update{ false };
+	CustomOptional<bool> FsrNonLinearSRGB{ false };
+	CustomOptional<bool> FsrNonLinearPQ{ false };
+	CustomOptional<bool> FsrAgilitySDKUpgrade{ false };
 
 	// FSR Common
 	CustomOptional<float> FsrVerticalFov{ 60.0f };
@@ -296,7 +303,7 @@ public:
 	CustomOptional<bool> LoadReShade{ false };
 
 	// Frame Generation
-	CustomOptional<FGType> FGType{ FGType::OptiFG };
+	CustomOptional<FGType> FGType{ FGType::NoFG };
 
 	// OptiFG
 	CustomOptional<bool> FGEnabled{ false };

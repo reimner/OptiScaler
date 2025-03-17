@@ -6,7 +6,86 @@
 
 #include "nvsdk_ngx_vk.h"
 
-static inline FfxApiResourceDescription ffxApiGetImageResourceDescriptionVKLocal(NVSDK_NGX_Resource_VK* vkResource, bool uav = false)
+static inline uint32_t ffxApiGetSurfaceFormatVKLocal(VkFormat fmt)
+{
+    switch (fmt)
+    {
+        case VK_FORMAT_R32G32B32A32_SFLOAT:
+            return FFX_API_SURFACE_FORMAT_R32G32B32A32_FLOAT;
+        case VK_FORMAT_R32G32B32_SFLOAT:
+            return FFX_API_SURFACE_FORMAT_R32G32B32_FLOAT;
+        case VK_FORMAT_R32G32B32A32_UINT:
+            return FFX_API_SURFACE_FORMAT_R32G32B32A32_UINT;
+        case VK_FORMAT_R16G16B16A16_SFLOAT:
+            return FFX_API_SURFACE_FORMAT_R16G16B16A16_FLOAT;
+        case VK_FORMAT_R32G32_SFLOAT:
+            return FFX_API_SURFACE_FORMAT_R32G32_FLOAT;
+        case VK_FORMAT_R32_UINT:
+        case VK_FORMAT_D24_UNORM_S8_UINT:
+        case VK_FORMAT_X8_D24_UNORM_PACK32:
+            return FFX_API_SURFACE_FORMAT_R32_UINT;
+        case VK_FORMAT_R8G8B8A8_UNORM:
+            return FFX_API_SURFACE_FORMAT_R8G8B8A8_UNORM;
+        case VK_FORMAT_R8G8B8A8_SNORM:
+            return FFX_API_SURFACE_FORMAT_R8G8B8A8_SNORM;
+        case VK_FORMAT_R8G8B8A8_SRGB:
+            return FFX_API_SURFACE_FORMAT_R8G8B8A8_SRGB;
+        case VK_FORMAT_B8G8R8A8_UNORM:
+            return FFX_API_SURFACE_FORMAT_B8G8R8A8_UNORM;
+        case VK_FORMAT_B8G8R8A8_SRGB:
+            return FFX_API_SURFACE_FORMAT_B8G8R8A8_SRGB;
+        case VK_FORMAT_B10G11R11_UFLOAT_PACK32:
+            return FFX_API_SURFACE_FORMAT_R11G11B10_FLOAT;
+        case VK_FORMAT_A2B10G10R10_UNORM_PACK32:
+            return FFX_API_SURFACE_FORMAT_R10G10B10A2_UNORM;
+        case VK_FORMAT_R16G16_UNORM:
+            return FFX_API_SURFACE_FORMAT_R8G8B8A8_UNORM;
+        case VK_FORMAT_R16G16_SNORM:
+            return FFX_API_SURFACE_FORMAT_R8G8B8A8_SNORM;
+        case VK_FORMAT_R16G16_USCALED:
+        case VK_FORMAT_R16G16_SSCALED:
+        case VK_FORMAT_R16G16_SFLOAT:
+            return FFX_API_SURFACE_FORMAT_R16G16_FLOAT;
+        case VK_FORMAT_R16G16_UINT:
+            return FFX_API_SURFACE_FORMAT_R16G16_UINT;
+        case VK_FORMAT_R16G16_SINT:
+            return FFX_API_SURFACE_FORMAT_R16G16_SINT;
+        case VK_FORMAT_R16_SFLOAT:
+            return FFX_API_SURFACE_FORMAT_R16_FLOAT;
+        case VK_FORMAT_R16_UINT:
+            return FFX_API_SURFACE_FORMAT_R16_UINT;
+        case VK_FORMAT_R16_UNORM:
+        case VK_FORMAT_D16_UNORM:
+        case VK_FORMAT_D16_UNORM_S8_UINT:
+            return FFX_API_SURFACE_FORMAT_R16_UNORM;
+        case VK_FORMAT_R16_SNORM:
+            return FFX_API_SURFACE_FORMAT_R16_SNORM;
+        case VK_FORMAT_R8_UNORM:
+            return FFX_API_SURFACE_FORMAT_R8_UNORM;
+        case VK_FORMAT_R8_UINT:
+        case VK_FORMAT_S8_UINT:
+            return FFX_API_SURFACE_FORMAT_R8_UINT;
+        case VK_FORMAT_R8G8_UNORM:
+            return FFX_API_SURFACE_FORMAT_R8G8_UNORM;
+        case VK_FORMAT_R8G8_UINT:
+            return FFX_API_SURFACE_FORMAT_R8G8_UINT;
+        case VK_FORMAT_R32_SFLOAT:
+        case VK_FORMAT_D32_SFLOAT:
+        case VK_FORMAT_D32_SFLOAT_S8_UINT:
+            return FFX_API_SURFACE_FORMAT_R32_FLOAT;
+        case VK_FORMAT_E5B9G9R9_UFLOAT_PACK32:
+            return FFX_API_SURFACE_FORMAT_R9G9B9E5_SHAREDEXP;
+        case VK_FORMAT_UNDEFINED:
+            return FFX_API_SURFACE_FORMAT_UNKNOWN;
+
+        default:
+            // NOTE: we do not support typeless formats here
+            //FFX_ASSERT_MESSAGE(false, "Format not yet supported");
+            return FFX_API_SURFACE_FORMAT_UNKNOWN;
+    }
+}
+
+static inline FfxApiResourceDescription ffxApiGetImageResourceDescriptionVKLocal(NVSDK_NGX_Resource_VK* vkResource)
 {
     FfxApiResourceDescription resourceDescription = {};
 
@@ -15,28 +94,30 @@ static inline FfxApiResourceDescription ffxApiGetImageResourceDescriptionVKLocal
         return resourceDescription;
 
     // Set flags properly for resource registration
-    resourceDescription.flags = FFX_API_RESOURCE_FLAGS_NONE;
+    resourceDescription.flags = FFX_API_RESOURCE_USAGE_READ_ONLY;
 
     // Unordered access use
-    if (uav)
-        resourceDescription.usage = FFX_API_RESOURCE_USAGE_UAV;
-    else
-        resourceDescription.usage = FFX_API_RESOURCE_USAGE_READ_ONLY;
+    if (vkResource->ReadWrite)
+        resourceDescription.usage |= FFX_API_RESOURCE_USAGE_UAV;
+
+    // depth use
+    if ((vkResource->Resource.ImageViewInfo.SubresourceRange.aspectMask & VK_IMAGE_ASPECT_DEPTH_BIT) > 0)
+        resourceDescription.usage |= FFX_API_RESOURCE_USAGE_DEPTHTARGET;
+
+    if ((vkResource->Resource.ImageViewInfo.SubresourceRange.aspectMask & VK_IMAGE_ASPECT_STENCIL_BIT) > 0)
+        resourceDescription.usage |= FFX_API_RESOURCE_USAGE_STENCILTARGET;
 
     resourceDescription.type = FFX_API_RESOURCE_TYPE_TEXTURE2D;
     resourceDescription.width = vkResource->Resource.ImageViewInfo.Width;
     resourceDescription.height = vkResource->Resource.ImageViewInfo.Height;
     resourceDescription.mipCount = 1;
     resourceDescription.depth = 1;
-
-    // For No Man's Sky
-    if (vkResource->Resource.ImageViewInfo.Format == VK_FORMAT_D32_SFLOAT_S8_UINT)
-        resourceDescription.format = FFX_API_SURFACE_FORMAT_R32_FLOAT;
-    else
-        resourceDescription.format = ffxApiGetSurfaceFormatVK(vkResource->Resource.ImageViewInfo.Format);
+    resourceDescription.flags = FFX_API_RESOURCE_FLAGS_NONE;
+    resourceDescription.format = ffxApiGetSurfaceFormatVKLocal(vkResource->Resource.ImageViewInfo.Format);
 
     return resourceDescription;
 }
+
 
 FSR31FeatureVk::FSR31FeatureVk(unsigned int InHandleId, NVSDK_NGX_Parameter* InParameters) : FSR31Feature(InHandleId, InParameters), IFeature_Vk(InHandleId, InParameters), IFeature(InHandleId, InParameters)
 {
@@ -105,15 +186,13 @@ bool FSR31FeatureVk::InitFSR3(const NVSDK_NGX_Parameter* InParameters)
     else
         Config::Instance()->DepthInverted.set_volatile_value(false);
 
-    if (Config::Instance()->AutoExposure.value_or(AutoExposure))
+    if (Config::Instance()->AutoExposure.value_or(AutoExposure) || State::Instance().AutoExposure.value_or(false))
     {
-        Config::Instance()->AutoExposure.set_volatile_value(true);
         _contextDesc.flags |= FFX_UPSCALE_ENABLE_AUTO_EXPOSURE;
         LOG_INFO("contextDesc.initFlags (AutoExposure) {0:b}", _contextDesc.flags);
     }
     else
     {
-        Config::Instance()->AutoExposure.set_volatile_value(false);
         LOG_INFO("contextDesc.initFlags (!AutoExposure) {0:b}", _contextDesc.flags);
     }
 
@@ -138,7 +217,7 @@ bool FSR31FeatureVk::InitFSR3(const NVSDK_NGX_Parameter* InParameters)
     else
         Config::Instance()->JitterCancellation.set_volatile_value(false);
 
-    if (Config::Instance()->DisplayResolution.value_or(!LowRes))
+    if (Config::Instance()->DisplayResolution.value_or(!LowRes || State::Instance().DisplaySizeMV.value_or(false)))
     {
         _contextDesc.flags |= FFX_UPSCALE_ENABLE_DISPLAY_RESOLUTION_MOTION_VECTORS;
         LOG_INFO("contextDesc.initFlags (!LowResMV) {0:b}", _contextDesc.flags);
@@ -146,6 +225,12 @@ bool FSR31FeatureVk::InitFSR3(const NVSDK_NGX_Parameter* InParameters)
     else
     {
         LOG_INFO("contextDesc.initFlags (LowResMV) {0:b}", _contextDesc.flags);
+    }
+
+    if (Config::Instance()->FsrNonLinearPQ.value_or_default() || Config::Instance()->FsrNonLinearSRGB.value_or_default())
+    {
+        _contextDesc.flags |= FFX_UPSCALE_ENABLE_NON_LINEAR_COLORSPACE;
+        LOG_INFO("contextDesc.initFlags (NonLinearColorSpace) {0:b}", _contextDesc.flags);
     }
 
     if (Config::Instance()->ExtendedLimits.value_or_default())
@@ -232,6 +317,11 @@ bool FSR31FeatureVk::Evaluate(VkCommandBuffer InCmdBuffer, NVSDK_NGX_Parameter* 
     if (Config::Instance()->FsrDebugView.value_or_default())
         params.flags = FFX_UPSCALE_FLAG_DRAW_DEBUG_VIEW;
 
+    if (Config::Instance()->FsrNonLinearPQ.value_or_default())
+        params.flags = FFX_UPSCALE_FLAG_NON_LINEAR_COLOR_PQ;
+    else if (Config::Instance()->FsrNonLinearSRGB.value_or_default())
+        params.flags = FFX_UPSCALE_FLAG_NON_LINEAR_COLOR_SRGB;
+
     InParameters->Get(NVSDK_NGX_Parameter_Jitter_Offset_X, &params.jitterOffset.x);
     InParameters->Get(NVSDK_NGX_Parameter_Jitter_Offset_Y, &params.jitterOffset.y);
 
@@ -287,7 +377,7 @@ bool FSR31FeatureVk::Evaluate(VkCommandBuffer InCmdBuffer, NVSDK_NGX_Parameter* 
         LOG_DEBUG("Output exist..");
 
         params.output = ffxApiGetResourceVK(((NVSDK_NGX_Resource_VK*)paramOutput)->Resource.ImageViewInfo.Image,
-                                            ffxApiGetImageResourceDescriptionVKLocal((NVSDK_NGX_Resource_VK*)paramOutput, true),
+                                            ffxApiGetImageResourceDescriptionVKLocal((NVSDK_NGX_Resource_VK*)paramOutput),
                                             FFX_API_RESOURCE_STATE_UNORDERED_ACCESS);
     }
     else
@@ -309,7 +399,7 @@ bool FSR31FeatureVk::Evaluate(VkCommandBuffer InCmdBuffer, NVSDK_NGX_Parameter* 
     }
     else
     {
-        if (!Config::Instance()->DisplayResolution.value_or(false))
+        if (!Config::Instance()->DisplayResolution.value_or(false) && !State::Instance().DisplaySizeMV.value_or(false))
         {
             LOG_ERROR("Depth not exist!!");
             return false;
@@ -317,7 +407,11 @@ bool FSR31FeatureVk::Evaluate(VkCommandBuffer InCmdBuffer, NVSDK_NGX_Parameter* 
     }
 
     void* paramExp = nullptr;
-    if (!Config::Instance()->AutoExposure.value_or(false))
+    if (Config::Instance()->AutoExposure.value_or(false) || State::Instance().AutoExposure.value_or(false))
+    {
+        LOG_DEBUG("AutoExposure enabled!");
+    }
+    else
     {
         InParameters->Get(NVSDK_NGX_Parameter_ExposureTexture, &paramExp);
 
@@ -332,13 +426,11 @@ bool FSR31FeatureVk::Evaluate(VkCommandBuffer InCmdBuffer, NVSDK_NGX_Parameter* 
         else
         {
             LOG_DEBUG("AutoExposure disabled but ExposureTexture is not exist, it may cause problems!!");
-            Config::Instance()->AutoExposure.set_volatile_value(true);
-            State::Instance().changeBackend = true;
+            State::Instance().AutoExposure = true;
+            State::Instance().changeBackend[Handle()->Id] = true;
             return true;
         }
     }
-    else
-        LOG_DEBUG("AutoExposure enabled!");
 
     void* paramReactiveMask = nullptr;
     if (InParameters->Get(NVSDK_NGX_Parameter_DLSS_Input_Bias_Current_Color_Mask, &paramReactiveMask) != NVSDK_NGX_Result_Success)
@@ -370,7 +462,7 @@ bool FSR31FeatureVk::Evaluate(VkCommandBuffer InCmdBuffer, NVSDK_NGX_Parameter* 
         {
             LOG_DEBUG("Bias mask not exist and its enabled in config, it may cause problems!!");
             Config::Instance()->DisableReactiveMask.set_volatile_value(true);
-            State::Instance().changeBackend = true;
+            State::Instance().changeBackend[Handle()->Id] = true;
             return true;
         }
     }
@@ -460,6 +552,12 @@ bool FSR31FeatureVk::Evaluate(VkCommandBuffer InCmdBuffer, NVSDK_NGX_Parameter* 
         if (result != FFX_API_RETURN_OK)
             LOG_WARN("Velocity configure result: {}", (UINT)result);
     }
+
+    if (InParameters->Get("FSR.upscaleSize.width", &params.upscaleSize.width) == NVSDK_NGX_Result_Success && Config::Instance()->OutputScalingEnabled.value_or_default())
+        params.upscaleSize.width *= Config::Instance()->OutputScalingMultiplier.value_or_default();
+
+    if (InParameters->Get("FSR.upscaleSize.height", &params.upscaleSize.height) == NVSDK_NGX_Result_Success && Config::Instance()->OutputScalingEnabled.value_or_default())
+        params.upscaleSize.height *= Config::Instance()->OutputScalingMultiplier.value_or_default();
 
     LOG_DEBUG("Dispatch!!");
     auto result = FfxApiProxy::VULKAN_Dispatch()(&_context, &params.header);

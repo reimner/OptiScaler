@@ -1,7 +1,11 @@
 #pragma once
 #include "pch.h"
-#include <deque>
+
 #include "upscalers/IFeature.h"
+
+#include <deque>
+#include <vulkan/vulkan.h>
+#include <ankerl/unordered_dense.h>
 
 typedef enum API
 {
@@ -17,7 +21,8 @@ typedef enum GameQuirk
 	Cyberpunk,
 	FMF2,
 	RDR1,
-	Banishers
+	Banishers,
+	SplitFiction
 } GameQuirk;
 
 typedef enum FGType : uint32_t
@@ -33,6 +38,12 @@ public:
         static State instance;
         return instance;
     }
+
+	// Init flags
+	// Used per feature
+	// Reseting on creation of new feature
+	std::optional<bool> DisplaySizeMV;
+	std::optional<bool> AutoExposure;
 
 	// DLSSG
 	GameQuirk gameQuirk = GameQuirk::Other;
@@ -85,7 +96,7 @@ public:
 	bool reflexShowWarning = false;
 
 	// for realtime changes
-	bool changeBackend = false;
+	ankerl::unordered_dense::map <unsigned int, bool> changeBackend;
 	std::string newBackend = "";
 
 	// XeSS debug stuff
@@ -95,13 +106,11 @@ public:
 	float lastMipBiasMax = -100.0f;
 
 	// DLSS
-	bool upscalerDisableHook = false;
 	bool dlssPresetsOverriddenExternally = false;
 	bool dlssdPresetsOverriddenExternally = false;
 
 	// Spoofing
 	bool skipSpoofing = false;
-	bool skipDllLoadChecks = false;
 	// For DXVK, it calls DXGI which cause softlock
 	bool skipDxgiLoadChecks = false;
 
@@ -113,7 +122,6 @@ public:
 	bool isRunningOnLinux = false;
 	bool isRunningOnDXVK = false;
 	bool isRunningOnNvidia = false;
-
 	bool isDxgiMode = false;
 	bool isWorkingAsNvngx = false;
 
@@ -121,6 +129,7 @@ public:
 	bool vulkanCreatingSC = false;
 	bool vulkanSkipHooks = false;
 	bool renderMenu = true;
+	VkInstance VulkanInstance = nullptr;
 
 	// Framegraph
 	std::deque<float> upscaleTimes;

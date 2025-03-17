@@ -17,6 +17,7 @@ static bool receivingWmInputs = false;
 static bool inputMenu = false;
 static bool inputFps = false;
 static bool inputFpsCycle = false;
+static bool hasGamepad = false;
 
 void MenuCommon::ShowTooltip(const char* tip) {
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
@@ -550,23 +551,26 @@ void MenuCommon::AddDx11Backends(std::string* code, std::string* name)
         selectedUpscalerName = "FSR 3.X";
     else if (State::Instance().newBackend == "fsr31_12" || (State::Instance().newBackend == "" && *code == "fsr31_12"))
         selectedUpscalerName = "FSR 3.X w/Dx12";
-    //else if (State::Instance().newBackend == "fsr304" || (State::Instance().newBackend == "" && *code == "fsr304"))
-    //    selectedUpscalerName = "FSR 3.0.4";
     else if (Config::Instance()->DLSSEnabled.value_or_default() && (State::Instance().newBackend == "dlss" || (State::Instance().newBackend == "" && *code == "dlss")))
         selectedUpscalerName = "DLSS";
+    else if (State::Instance().newBackend == "xess" || (State::Instance().newBackend == "" && *code == "xess"))
+        selectedUpscalerName = "XeSS";
     else
         selectedUpscalerName = "XeSS w/Dx12";
 
     if (ImGui::BeginCombo("Select", selectedUpscalerName.c_str()))
     {
+        if (ImGui::Selectable("XeSS", *code == "xess"))
+            State::Instance().newBackend = "xess";
+
         if (ImGui::Selectable("FSR 2.2.1", *code == "fsr22"))
             State::Instance().newBackend = "fsr22";
 
         if (ImGui::Selectable("FSR 3.X", *code == "fsr31"))
             State::Instance().newBackend = "fsr31";
 
-        if (ImGui::Selectable("XeSS w/Dx12", *code == "xess"))
-            State::Instance().newBackend = "xess";
+        if (ImGui::Selectable("XeSS w/Dx12", *code == "xess_12"))
+            State::Instance().newBackend = "xess_12";
 
         if (ImGui::Selectable("FSR 2.1.2 w/Dx12", *code == "fsr21_12"))
             State::Instance().newBackend = "fsr21_12";
@@ -628,6 +632,8 @@ void MenuCommon::AddVulkanBackends(std::string* code, std::string* name)
         selectedUpscalerName = "FSR 2.1.2";
     else if (State::Instance().newBackend == "fsr31" || (State::Instance().newBackend == "" && *code == "fsr31"))
         selectedUpscalerName = "FSR 3.X";
+    else if (State::Instance().newBackend == "xess" || (State::Instance().newBackend == "" && *code == "xess"))
+        selectedUpscalerName = "XeSS";
     else if (Config::Instance()->DLSSEnabled.value_or_default() && (State::Instance().newBackend == "dlss" || (State::Instance().newBackend == "" && *code == "dlss")))
         selectedUpscalerName = "DLSS";
     else
@@ -635,6 +641,9 @@ void MenuCommon::AddVulkanBackends(std::string* code, std::string* name)
 
     if (ImGui::BeginCombo("Select", selectedUpscalerName.c_str()))
     {
+        if (ImGui::Selectable("XeSS", *code == "xess"))
+            State::Instance().newBackend = "xess";
+
         if (ImGui::Selectable("FSR 2.1.2", *code == "fsr21"))
             State::Instance().newBackend = "fsr21";
 
@@ -696,7 +705,7 @@ void MenuCommon::AddDLSSRenderPreset(std::string name, CustomOptional<uint32_t, 
 {
     const char* presets[] = { "DEFAULT", "PRESET A", "PRESET B", "PRESET C", "PRESET D", "PRESET E", "PRESET F", "PRESET G",
                              "PRESET H", "PRESET I", "PRESET J", "PRESET K", "PRESET L", "PRESET M", "PRESET N", "PRESET O",
-                             "Latest"};
+                             "Latest" };
     const std::string presetsDesc[] = { "Whatever the game uses",
         "Intended for Performance/Balanced/Quality modes.\nAn older variant best suited to combat ghosting for elements with missing inputs, such as motion vectors.",
         "Intended for Ultra Performance mode.\nSimilar to Preset A but for Ultra Performance mode.",
@@ -885,10 +894,28 @@ static void MenuSizeCheck(ImGuiIO io)
     }
 }
 
+static double lastTime = 0.0;
+
 bool MenuCommon::RenderMenu()
 {
     if (!_isInited)
         return false;
+
+    // FPS & frame time calculation
+    auto now = Util::MillisecondsNow();
+    double frameTime = 0.0;
+    double frameRate = 0.0;
+
+    if (lastTime > 0.0)
+    {
+        frameTime = now - lastTime;
+        frameRate = 1000.0 / frameTime;
+    }
+
+    lastTime = now;
+
+    State::Instance().frameTimes.pop_front();
+    State::Instance().frameTimes.push_back(frameTime);
 
     ImGuiIO& io = ImGui::GetIO(); (void)io;
 
@@ -917,6 +944,14 @@ bool MenuCommon::RenderMenu()
                 auto dllPath = Util::DllPath().parent_path() / "dlssg_to_fsr3_amd_is_better.dll";
                 State::Instance().NukemsFilesAvailable = std::filesystem::exists(dllPath);
 
+                io.ClearEventsQueue();
+                io.ClearInputCharacters();
+                io.ClearInputKeys();
+                io.ClearInputMouse();
+
+                if (hasGamepad)
+                    io.BackendFlags | ImGuiBackendFlags_HasGamepad;
+
                 io.ConfigFlags = ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_NavEnableGamepad;
 
                 if (pfn_ClipCursor_hooked)
@@ -931,6 +966,8 @@ bool MenuCommon::RenderMenu()
             }
             else
             {
+                hasGamepad = (io.BackendFlags | ImGuiBackendFlags_HasGamepad) > 0;
+                io.BackendFlags &= 30;
                 io.ConfigFlags = ImGuiConfigFlags_NavNoCaptureKeyboard | ImGuiConfigFlags_NoMouse | ImGuiConfigFlags_NoMouseCursorChange | ImGuiConfigFlags_NoKeyboard;
 
                 if (pfn_ClipCursor_hooked)
@@ -952,13 +989,23 @@ bool MenuCommon::RenderMenu()
     // If Fps overlay is visible
     if (Config::Instance()->ShowFps.value_or_default())
     {
+        float frameCnt = 0;
+        for (size_t i = 299; i > 199; i--)
+        {
+            if (State::Instance().frameTimes[i] > 0.0)
+            {
+                frameTime += State::Instance().frameTimes[i];
+                frameCnt++;
+            }
+        }
+
+        frameTime /= frameCnt;
+        frameRate = 1000.0 / frameTime;
+
         ImGui_ImplWin32_NewFrame();
         MenuHdrCheck(io);
         MenuSizeCheck(io);
         ImGui::NewFrame();
-
-        State::Instance().frameTimes.pop_front();
-        State::Instance().frameTimes.push_back(1000.0 / io.Framerate);
 
         std::vector<float> frameTimeArray(State::Instance().frameTimes.begin(), State::Instance().frameTimes.end());
         std::vector<float> upscalerFrameTimeArray(State::Instance().upscaleTimes.begin(), State::Instance().upscaleTimes.end());
@@ -1038,9 +1085,9 @@ bool MenuCommon::RenderMenu()
             }
 
             if (Config::Instance()->FpsOverlayType.value_or_default() == 0)
-                ImGui::Text("%s %5.1f fps %5.2f ms", api.c_str(), io.Framerate, 1000.0f / io.Framerate);
+                ImGui::Text("%s %5.1f fps %5.2f ms", api.c_str(), frameRate, frameTime);
             else
-                ImGui::Text("%s Fps: %5.1f, Avg: %5.1f", api.c_str(), io.Framerate, 1000.0f / averageFrameTime);
+                ImGui::Text("%s Fps: %5.1f, Avg: %5.1f", api.c_str(), frameRate, 1000.0f / averageFrameTime);
 
             if (Config::Instance()->FpsOverlayType.value_or_default() > 0)
             {
@@ -1138,6 +1185,19 @@ bool MenuCommon::RenderMenu()
         // If overlay is not visible frame needs to be inited
         if (!Config::Instance()->ShowFps.value_or_default())
         {
+            float frameCnt = 0;
+            for (size_t i = 299; i > 199; i--)
+            {
+                if (State::Instance().frameTimes[i] > 0.0)
+                {
+                    frameTime += State::Instance().frameTimes[i];
+                    frameCnt++;
+                }
+            }
+
+            frameTime /= frameCnt;
+            frameRate = 1000.0 / frameTime;
+
             ImGui_ImplWin32_NewFrame();
             MenuHdrCheck(io);
             MenuSizeCheck(io);
@@ -1197,11 +1257,16 @@ bool MenuCommon::RenderMenu()
             if (currentFeature == nullptr || !currentFeature->IsInited())
             {
                 ImGui::Spacing();
-                ImGui::PushFont(MenuBase::scaledFont);
+
+                if (Config::Instance()->UseHQFont.value_or_default())
+                    ImGui::PushFont(MenuBase::scaledFont);
+                else
+                    ImGui::SetWindowFontScale(Config::Instance()->MenuScale.value_or(1.0) * 3.0);
 
                 if (State::Instance().nvngxExists || State::Instance().libxessExists)
                 {
                     ImGui::Spacing();
+
                     ImGui::Text("Please select %s%s%s%s%s as upscaler\nfrom game options and enter the game\nto enable upscaler settings.\n",
                                 State::Instance().fsrHooks ? "FSR" : "",
                                 State::Instance().fsrHooks && (State::Instance().nvngxExists || State::Instance().isRunningOnNvidia) ? " or " : "",
@@ -1210,7 +1275,10 @@ bool MenuCommon::RenderMenu()
                                 State::Instance().libxessExists ? "XeSS" : "");
 
 
-                    ImGui::PopFont();
+                    if (Config::Instance()->UseHQFont.value_or_default())
+                        ImGui::PopFont();
+                    else
+                        ImGui::SetWindowFontScale(Config::Instance()->MenuScale.value_or(1.0));
 
                     ImGui::Spacing();
                     ImGui::Text("nvngx.dll: %sExist", State::Instance().nvngxExists || State::Instance().isRunningOnNvidia ? "" : "Not ");
@@ -1224,7 +1292,10 @@ bool MenuCommon::RenderMenu()
                     ImGui::Text("Can't find nvngx.dll and libxess.dll and FSR inputs\nUpscaling support will NOT work.");
                     ImGui::Spacing();
 
-                    ImGui::PopFont();
+                    if (Config::Instance()->UseHQFont.value_or_default())
+                        ImGui::PopFont();
+                    else
+                        ImGui::SetWindowFontScale(Config::Instance()->MenuScale.value_or(1.0));
                 }
 
             }
@@ -1265,6 +1336,9 @@ bool MenuCommon::RenderMenu()
                         default:
                             ImGui::Text("Vulkan %s- %s (%d.%d.%d)", State::Instance().isRunningOnDXVK ? "(DXVK) " : "", State::Instance().currentFeature->Name(), State::Instance().currentFeature->Version().major, State::Instance().currentFeature->Version().minor, State::Instance().currentFeature->Version().patch);
 
+                            ImGui::SameLine(0.0f, 6.0f);
+                            ImGui::Text("Source Api: %s", State::Instance().currentInputApiName.c_str());
+
                             if (State::Instance().currentFeature->Name() != "DLSSD")
                                 AddVulkanBackends(&currentBackend, &currentBackendName);
                     }
@@ -1280,7 +1354,8 @@ bool MenuCommon::RenderMenu()
                                 Config::Instance()->DlssReactiveMaskBias.reset();
                             }
 
-                            State::Instance().changeBackend = true;
+                            for (auto& singleChangeBackend : State::Instance().changeBackend)
+                                singleChangeBackend.second = true;
                         }
 
                         ImGui::SameLine(0.0f, 6.0f);
@@ -1317,17 +1392,17 @@ bool MenuCommon::RenderMenu()
                 }
 
                 // Nukem's FG mod requirements
-                if (State::Instance().api == DX11) 
+                if (State::Instance().api == DX11)
                 {
                     disabledMask[2] = true;
                     fgDesc[2] = "Unsupported API";
                 }
-                else if (State::Instance().isWorkingAsNvngx) 
+                else if (State::Instance().isWorkingAsNvngx)
                 {
                     disabledMask[2] = true;
                     fgDesc[2] = "Unsupported Opti working mode";
                 }
-                else if (!State::Instance().NukemsFilesAvailable) 
+                else if (!State::Instance().NukemsFilesAvailable)
                 {
                     disabledMask[2] = true;
                     fgDesc[2] = "Missing the dlssg_to_fsr3_amd_is_better.dll file";
@@ -1816,7 +1891,8 @@ bool MenuCommon::RenderMenu()
                                     {
                                         Config::Instance()->NetworkModel = n;
                                         State::Instance().newBackend = currentBackend;
-                                        State::Instance().changeBackend = true;
+                                        for (auto& singleChangeBackend : State::Instance().changeBackend)
+                                            singleChangeBackend.second = true;
                                     }
                                 }
 
@@ -1876,7 +1952,8 @@ bool MenuCommon::RenderMenu()
                             {
                                 Config::Instance()->Fsr3xIndex = _fsr3xIndex;
                                 State::Instance().newBackend = currentBackend;
-                                State::Instance().changeBackend = true;
+                                for (auto& singleChangeBackend : State::Instance().changeBackend)
+                                    singleChangeBackend.second = true;
                             }
 
                             if (currentFeature->Version().patch > 0)
@@ -1892,6 +1969,34 @@ bool MenuCommon::RenderMenu()
 
                         if (currentBackend == "fsr31" || currentBackend == "fsr31_12")
                         {
+                            if (bool nlSRGB = Config::Instance()->FsrNonLinearSRGB.value_or_default(); ImGui::Checkbox("FSR Non-Linear sRGB Input", &nlSRGB))
+                            {
+                                Config::Instance()->FsrNonLinearSRGB = nlSRGB;
+
+                                if (nlSRGB)
+                                    Config::Instance()->FsrNonLinearPQ = false;
+
+                                State::Instance().newBackend = currentBackend;
+                                for (auto& singleChangeBackend : State::Instance().changeBackend)
+                                    singleChangeBackend.second = true;
+                            }
+                            ShowHelpMarker("Indicates input color resource contains perceptual sRGB colors\n"
+                                           "Might improve upscaling quality of FSR4");
+
+                            if (bool nlPQ = Config::Instance()->FsrNonLinearPQ.value_or_default(); ImGui::Checkbox("FSR Non-Linear PQ Input", &nlPQ))
+                            {
+                                Config::Instance()->FsrNonLinearPQ = nlPQ;
+
+                                if (nlPQ)
+                                    Config::Instance()->FsrNonLinearSRGB = false;
+
+                                State::Instance().newBackend = currentBackend;
+                                for (auto& singleChangeBackend : State::Instance().changeBackend)
+                                    singleChangeBackend.second = true;
+                            }
+                            ShowHelpMarker("Indicates input color resource contains perceptual PQ colors\n"
+                                           "Might improve upscaling quality of FSR4");
+
                             if (bool dView = Config::Instance()->FsrDebugView.value_or_default(); ImGui::Checkbox("FSR 3.X Debug View", &dView))
                                 Config::Instance()->FsrDebugView = dView;
                             ShowHelpMarker("Top left: Dilated Motion Vectors\n"
@@ -2011,9 +2116,9 @@ bool MenuCommon::RenderMenu()
                         if (overridden) {
                             ImGui::TextColored(ImVec4(1.f, 0.f, 0.f, 1.f), "Presets are overridden externally");
                             ShowHelpMarker("This usually happens due to using tools\n"
-                                "such as Nvidia App or Nvidia Inspector");
+                                           "such as Nvidia App or Nvidia Inspector");
                             ImGui::Text("Selecting setting below will disable that external override\n"
-                                "but you need to Save INI and restart the game");
+                                        "but you need to Save INI and restart the game");
 
                             ImGui::Spacing();
                         }
@@ -2021,7 +2126,7 @@ bool MenuCommon::RenderMenu()
                         if (bool pOverride = Config::Instance()->RenderPresetOverride.value_or_default(); ImGui::Checkbox("Render Presets Override", &pOverride))
                             Config::Instance()->RenderPresetOverride = pOverride;
                         ShowHelpMarker("Each render preset has it strengths and weaknesses\n"
-                            "Override to potentially improve image quality");
+                                       "Override to potentially improve image quality");
 
                         ImGui::BeginDisabled(!Config::Instance()->RenderPresetOverride.value_or_default() || overridden);
 
@@ -2042,7 +2147,8 @@ bool MenuCommon::RenderMenu()
                             else
                                 State::Instance().newBackend = currentBackend;
 
-                            State::Instance().changeBackend = true;
+                            for (auto& singleChangeBackend : State::Instance().changeBackend)
+                                singleChangeBackend.second = true;
                         }
 
                         ImGui::EndDisabled();
@@ -2058,8 +2164,8 @@ bool MenuCommon::RenderMenu()
                                 Config::Instance()->UseGenericAppIdWithDlss = appIdOverride;
 
                             ShowHelpMarker("Use generic appid with NGX\n"
-                                "Fixes OptiScaler preset override not working with certain games\n"
-                                "Requires a game restart.");
+                                           "Fixes OptiScaler preset override not working with certain games\n"
+                                           "Requires a game restart.");
 
                             ImGui::BeginDisabled(!Config::Instance()->RenderPresetOverride.value_or_default() || overridden);
                             ImGui::Spacing();
@@ -2292,8 +2398,8 @@ bool MenuCommon::RenderMenu()
                     if (State::Instance().api == DX12 || State::Instance().api == DX11)
                     {
                         // if motion vectors are not display size
-                        ImGui::BeginDisabled((Config::Instance()->DisplayResolution.has_value() && Config::Instance()->DisplayResolution.value()) ||
-                                             (!Config::Instance()->DisplayResolution.has_value() && !(State::Instance().currentFeature->GetFeatureFlags() & NVSDK_NGX_DLSS_Feature_Flags_MVLowRes)));
+                        ImGui::BeginDisabled(!Config::Instance()->DisplayResolution.value_or(false) && !State::Instance().DisplaySizeMV.value_or(false) &&
+                                             !(State::Instance().currentFeature->GetFeatureFlags() & NVSDK_NGX_DLSS_Feature_Flags_MVLowRes));
 
                         ImGui::SeparatorText("Output Scaling");
 
@@ -2359,7 +2465,8 @@ bool MenuCommon::RenderMenu()
                                 State::Instance().newBackend = currentBackend;
 
 
-                            State::Instance().changeBackend = true;
+                            for (auto& singleChangeBackend : State::Instance().changeBackend)
+                                singleChangeBackend.second = true;
                         }
                         ImGui::EndDisabled();
 
@@ -2392,7 +2499,8 @@ bool MenuCommon::RenderMenu()
                         if (currentBackend == "dlss" && State::Instance().currentFeature->Version().major < 3)
                         {
                             State::Instance().newBackend = currentBackend;
-                            State::Instance().changeBackend = true;
+                            for (auto& singleChangeBackend : State::Instance().changeBackend)
+                                singleChangeBackend.second = true;
                         }
                     }
                     ShowHelpMarker("Ignores the value sent by the game\n"
@@ -2487,7 +2595,7 @@ bool MenuCommon::RenderMenu()
                     if (ImGui::BeginTable("init", 2, ImGuiTableFlags_SizingStretchSame))
                     {
                         ImGui::TableNextColumn();
-                        if (bool autoExposure = Config::Instance()->AutoExposure.value_or(false); ImGui::Checkbox("Auto Exposure", &autoExposure))
+                        if (bool autoExposure = Config::Instance()->AutoExposure.value_or(false) || State::Instance().AutoExposure.value_or(false); ImGui::Checkbox("Auto Exposure", &autoExposure))
                         {
                             Config::Instance()->AutoExposure = autoExposure;
 
@@ -2496,7 +2604,8 @@ bool MenuCommon::RenderMenu()
                             else
                                 State::Instance().newBackend = currentBackend;
 
-                            State::Instance().changeBackend = true;
+                            for (auto& singleChangeBackend : State::Instance().changeBackend)
+                                singleChangeBackend.second = true;
                         }
                         ShowHelpMarker("Some Unreal Engine games need this\n"
                                        "Might fix colors, especially in dark areas");
@@ -2511,7 +2620,8 @@ bool MenuCommon::RenderMenu()
                             else
                                 State::Instance().newBackend = currentBackend;
 
-                            State::Instance().changeBackend = true;
+                            for (auto& singleChangeBackend : State::Instance().changeBackend)
+                                singleChangeBackend.second = true;
                         }
                         ShowHelpMarker("Might help with purple hue in some games");
 
@@ -2534,7 +2644,8 @@ bool MenuCommon::RenderMenu()
                                     else
                                         State::Instance().newBackend = currentBackend;
 
-                                    State::Instance().changeBackend = true;
+                                    for (auto& singleChangeBackend : State::Instance().changeBackend)
+                                        singleChangeBackend.second = true;
                                 }
                                 ShowHelpMarker("You shouldn't need to change it");
 
@@ -2548,12 +2659,13 @@ bool MenuCommon::RenderMenu()
                                     else
                                         State::Instance().newBackend = currentBackend;
 
-                                    State::Instance().changeBackend = true;
+                                    for (auto& singleChangeBackend : State::Instance().changeBackend)
+                                        singleChangeBackend.second = true;
                                 }
                                 ShowHelpMarker("Fix for games that send motion data with preapplied jitter");
 
                                 ImGui::TableNextColumn();
-                                if (bool mv = Config::Instance()->DisplayResolution.value_or(false); ImGui::Checkbox("Display Res. MV", &mv))
+                                if (bool mv = Config::Instance()->DisplayResolution.value_or(false) || State::Instance().DisplaySizeMV.value_or(false); ImGui::Checkbox("Display Res. MV", &mv))
                                 {
                                     Config::Instance()->DisplayResolution = mv;
 
@@ -2568,7 +2680,8 @@ bool MenuCommon::RenderMenu()
                                     else
                                         State::Instance().newBackend = currentBackend;
 
-                                    State::Instance().changeBackend = true;
+                                    for (auto& singleChangeBackend : State::Instance().changeBackend)
+                                        singleChangeBackend.second = true;
                                 }
                                 ShowHelpMarker("Mostly a fix for Unreal Engine games\n"
                                                "Top left part of the screen will be blurry");
@@ -2585,7 +2698,8 @@ bool MenuCommon::RenderMenu()
                                     if (currentBackend == "xess")
                                     {
                                         State::Instance().newBackend = currentBackend;
-                                        State::Instance().changeBackend = true;
+                                        for (auto& singleChangeBackend : State::Instance().changeBackend)
+                                            singleChangeBackend.second = true;
                                     }
                                 }
 
@@ -2690,7 +2804,8 @@ bool MenuCommon::RenderMenu()
                     {
                         Config::Instance()->UsePrecompiledShaders = pcShaders;
                         State::Instance().newBackend = currentBackend;
-                        State::Instance().changeBackend = true;
+                        for (auto& singleChangeBackend : State::Instance().changeBackend)
+                            singleChangeBackend.second = true;
                     }
                 }
 
@@ -3014,14 +3129,11 @@ bool MenuCommon::RenderMenu()
                 ImGui::Separator();
                 ImGui::Spacing();
 
-                State::Instance().frameTimes.pop_front();
-                State::Instance().frameTimes.push_back(1000.0 / io.Framerate);
-
                 if (ImGui::BeginTable("plots", 2, ImGuiTableFlags_SizingStretchSame))
                 {
                     ImGui::TableNextColumn();
                     ImGui::Text("FrameTime");
-                    auto ft = std::format("{:5.2f} ms / {:5.1f} fps", State::Instance().frameTimes.back(), io.Framerate);
+                    auto ft = std::format("{:5.2f} ms / {:5.1f} fps", State::Instance().frameTimes.back(), frameRate);
                     std::vector<float> frameTimeArray(State::Instance().frameTimes.begin(), State::Instance().frameTimes.end());
                     ImGui::PlotLines(ft.c_str(), frameTimeArray.data(), frameTimeArray.size());
 
@@ -3095,8 +3207,18 @@ bool MenuCommon::RenderMenu()
 
                 if (ImGui::Button("Close"))
                 {
-                    _showMipmapCalcWindow = false;
                     _isVisible = false;
+                    hasGamepad = (io.BackendFlags | ImGuiBackendFlags_HasGamepad) > 0;
+                    io.BackendFlags &= 30;
+                    io.ConfigFlags = ImGuiConfigFlags_NavNoCaptureKeyboard | ImGuiConfigFlags_NoMouse | ImGuiConfigFlags_NoMouseCursorChange | ImGuiConfigFlags_NoKeyboard;
+
+                    if (pfn_ClipCursor_hooked)
+                        pfn_ClipCursor(&_cursorLimit);
+
+                    _showMipmapCalcWindow = false;
+                    io.MouseDrawCursor = false;
+                    io.WantCaptureKeyboard = false;
+                    io.WantCaptureMouse = false;
                 }
 
                 ImGui::Spacing();
@@ -3300,14 +3422,17 @@ void MenuCommon::Init(HWND InHwnd)
     ImGui::StyleColorsDark();
 
     ImGuiIO& io = ImGui::GetIO(); (void)io;
-    io.ConfigFlags = ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_NavEnableGamepad;
+
+    hasGamepad = (io.BackendFlags | ImGuiBackendFlags_HasGamepad) > 0;
+    io.BackendFlags &= 30;
+    io.ConfigFlags = ImGuiConfigFlags_NavNoCaptureKeyboard | ImGuiConfigFlags_NoMouse | ImGuiConfigFlags_NoMouseCursorChange | ImGuiConfigFlags_NoKeyboard;
 
     io.MouseDrawCursor = _isVisible;
     io.WantCaptureKeyboard = _isVisible;
     io.WantCaptureMouse = _isVisible;
     io.WantSetMousePos = _isVisible;
 
-    io.IniFilename = io.LogFilename = nullptr;
+    io.IniFilename = io.LogFilename = nullptr; 
 
     bool initResult = ImGui_ImplWin32_Init(InHwnd);
     LOG_DEBUG("ImGui_ImplWin32_Init result: {0}", initResult);
@@ -3334,7 +3459,6 @@ void MenuCommon::Shutdown()
 {
     if (!MenuCommon::_isInited)
         return;
-
 
     if (_oWndProc != nullptr)
     {

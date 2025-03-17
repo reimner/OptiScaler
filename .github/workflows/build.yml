@@ -147,7 +147,7 @@ jobs:
     - name: Compress the artifact 
       run: |
         $zipName = "${{ steps.get_version.outputs.filename }}.7z"
-        7z a ${{ github.workspace }}\$zipName ${{ github.workspace }}\x64\Release\a\*.*
+        7z a -r ${{ github.workspace }}\$zipName ${{ github.workspace }}\x64\Release\a\*.*
 
       continue-on-error: false
         
@@ -199,7 +199,7 @@ jobs:
         Write-Output "Fetching commits from the last 24 hours..."
 
         # Get commit messages excluding .yml file commits
-        $commits = git log --since="1 day ago" --pretty=format:"%h %s (%an)" --abbrev-commit --grep=".yml" --grep=".md" --invert-grep  --no-merges --first-parent
+        $commits = git log --since="1 day ago" --pretty=format:"%h %s (%an)" --abbrev-commit --no-merges --first-parent
         
         $commits = $commits -split "`n"
 
