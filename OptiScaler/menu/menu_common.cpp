@@ -472,7 +472,7 @@ LRESULT MenuCommon::WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
                         io.AddMouseButtonEvent(2, false);
 
                     if (rawData.data.mouse.usButtonFlags & RI_MOUSE_WHEEL)
-                        io.AddMouseWheelEvent(0, static_cast<short>(rawData.data.mouse.usButtonData) / WHEEL_DELTA);
+                        io.AddMouseWheelEvent(0, static_cast<short>(rawData.data.mouse.usButtonData) / (float)WHEEL_DELTA);
                 }
 
                 else
@@ -486,6 +486,13 @@ LRESULT MenuCommon::WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
     }
 
     return CallWindowProc(_oWndProc, hWnd, msg, wParam, lParam);
+}
+
+void KeyUp(UINT vKey)
+{
+    inputMenu = vKey == Config::Instance()->ShortcutKey.value_or_default();
+    inputFps = vKey == Config::Instance()->FpsShortcutKey.value_or_default();
+    inputFpsCycle = vKey == Config::Instance()->FpsCycleShortcutKey.value_or_default();
 }
 
 std::string MenuCommon::GetBackendName(std::string* code)
@@ -873,10 +880,15 @@ static void MenuSizeCheck(ImGuiIO io)
     {
         if (!Config::Instance()->MenuScale.has_value())
         {
-            // 1000p is minimum for 1.0 menu ratio
-            Config::Instance()->MenuScale = (float)((int)((float)io.DisplaySize.y / 100.0f)) / 10.0f;
+            float y = State::Instance().screenHeight;
 
-            if (Config::Instance()->MenuScale.value() > 1.0f)
+            if (io.DisplaySize.y != 0)
+                y = (float)io.DisplaySize.y;
+
+            // 1000p is minimum for 1.0 menu ratio
+            Config::Instance()->MenuScale = (float)((int)(y / 100.0f)) / 10.0f;
+
+            if (Config::Instance()->MenuScale.value() > 1.0f || Config::Instance()->MenuScale.value() <= 0.0f)
                 Config::Instance()->MenuScale.value() = 1.0f;
 
             ImGuiStyle& style = ImGui::GetStyle();
@@ -895,11 +907,14 @@ static void MenuSizeCheck(ImGuiIO io)
 }
 
 static double lastTime = 0.0;
+static UINT64 uwpTargetFrame = 0;
 
 bool MenuCommon::RenderMenu()
 {
     if (!_isInited)
         return false;
+
+    _frameCount++;
 
     // FPS & frame time calculation
     auto now = Util::MillisecondsNow();
@@ -918,14 +933,16 @@ bool MenuCommon::RenderMenu()
     State::Instance().frameTimes.push_back(frameTime);
 
     ImGuiIO& io = ImGui::GetIO(); (void)io;
+    auto currentFeature = State::Instance().currentFeature;
+
+    bool newFrame = false;
 
     // Handle Inputs
     {
         if (inputFps)
         {
-            Config::Instance()->ShowFps = !Config::Instance()->ShowFps.value_or_default();
             inputFps = false;
-            return false;
+            Config::Instance()->ShowFps = !Config::Instance()->ShowFps.value_or_default();
         }
 
         if (inputFpsCycle && Config::Instance()->ShowFps.value_or_default())
@@ -943,11 +960,6 @@ bool MenuCommon::RenderMenu()
                 Config::Instance()->ReloadFakenvapi();
                 auto dllPath = Util::DllPath().parent_path() / "dlssg_to_fsr3_amd_is_better.dll";
                 State::Instance().NukemsFilesAvailable = std::filesystem::exists(dllPath);
-
-                io.ClearEventsQueue();
-                io.ClearInputCharacters();
-                io.ClearInputKeys();
-                io.ClearInputMouse();
 
                 if (hasGamepad)
                     io.BackendFlags | ImGuiBackendFlags_HasGamepad;
@@ -968,7 +980,7 @@ bool MenuCommon::RenderMenu()
             {
                 hasGamepad = (io.BackendFlags | ImGuiBackendFlags_HasGamepad) > 0;
                 io.BackendFlags &= 30;
-                io.ConfigFlags = ImGuiConfigFlags_NavNoCaptureKeyboard | ImGuiConfigFlags_NoMouse | ImGuiConfigFlags_NoMouseCursorChange | ImGuiConfigFlags_NoKeyboard;
+                io.ConfigFlags = ImGuiConfigFlags_NoMouse | ImGuiConfigFlags_NoMouseCursorChange | ImGuiConfigFlags_NoKeyboard;
 
                 if (pfn_ClipCursor_hooked)
                     pfn_ClipCursor(&_cursorLimit);
@@ -979,8 +991,6 @@ bool MenuCommon::RenderMenu()
             io.MouseDrawCursor = _isVisible;
             io.WantCaptureKeyboard = _isVisible;
             io.WantCaptureMouse = _isVisible;
-
-            return false;
         }
 
         inputFpsCycle = false;
@@ -1002,7 +1012,16 @@ bool MenuCommon::RenderMenu()
         frameTime /= frameCnt;
         frameRate = 1000.0 / frameTime;
 
-        ImGui_ImplWin32_NewFrame();
+        if (!_isUWP)
+        {
+            ImGui_ImplWin32_NewFrame();
+        }
+        else if (!newFrame)
+        {
+            ImVec2 displaySize{ State::Instance().screenWidth, State::Instance().screenHeight };
+            ImGui_ImplUwp_NewFrame(displaySize);
+        }
+
         MenuHdrCheck(io);
         MenuSizeCheck(io);
         ImGui::NewFrame();
@@ -1084,18 +1103,29 @@ bool MenuCommon::RenderMenu()
                 }
             }
 
+
             if (Config::Instance()->FpsOverlayType.value_or_default() == 0)
-                ImGui::Text("%s %5.1f fps %5.2f ms", api.c_str(), frameRate, frameTime);
+            {
+                if (currentFeature != nullptr)
+                    ImGui::Text("%s | FPS: %5.1f, %5.2f ms | %s -> %s", api.c_str(), frameRate, frameTime, State::Instance().currentInputApiName.c_str(), currentFeature->Name());
+                else
+                    ImGui::Text("%s | FPS: %5.1f, %5.2f ms", api.c_str(), frameRate, frameTime);
+            }
             else
-                ImGui::Text("%s Fps: %5.1f, Avg: %5.1f", api.c_str(), frameRate, 1000.0f / averageFrameTime);
+            {
+                if (currentFeature != nullptr)
+                    ImGui::Text("%s | FPS: %5.1f, Avg: %5.1f | %s -> %s", api.c_str(), frameRate, 1000.0f / averageFrameTime, State::Instance().currentInputApiName.c_str(), currentFeature->Name());
+                else
+                    ImGui::Text("%s | FPS: %5.1f, Avg: %5.1f", api.c_str(), frameRate, 1000.0f / averageFrameTime);
+            }
 
             if (Config::Instance()->FpsOverlayType.value_or_default() > 0)
             {
                 if (Config::Instance()->FpsOverlayHorizontal.value_or_default())
                 {
-                    ImGui::SameLine(0.0f, 8.0f);
+                    ImGui::SameLine(0.0f, 0.0f);
                     ImGui::Text(" | ");
-                    ImGui::SameLine(0.0f, 8.0f);
+                    ImGui::SameLine(0.0f, 0.0f);
                 }
                 else
                 {
@@ -1105,15 +1135,17 @@ bool MenuCommon::RenderMenu()
                 ImGui::Text("Frame Time: %5.2f ms, Avg: %5.2f ms", State::Instance().frameTimes.back(), averageFrameTime);
             }
 
+            ImVec2 plotSize;
+
+            if (Config::Instance()->FpsOverlayHorizontal.value_or_default())
+                plotSize = { Config::Instance()->MenuScale.value() * 150, Config::Instance()->MenuScale.value() * 16 };
+            else
+                plotSize = { Config::Instance()->MenuScale.value() * 300, Config::Instance()->MenuScale.value() * 30 };
+
             if (Config::Instance()->FpsOverlayType.value_or_default() > 1)
             {
-                ImVec2 plotSize(Config::Instance()->MenuScale.value() * 300, Config::Instance()->MenuScale.value() * 30);
-
                 if (Config::Instance()->FpsOverlayHorizontal.value_or_default())
-                {
-                    ImGui::SameLine(0.0f, 8.0f);
-                    plotSize.y = Config::Instance()->MenuScale.value() * 16;
-                }
+                    ImGui::SameLine(0.0f, 0.0f);
 
                 // Graph of frame times
                 ImGui::PlotLines("##FrameTimeGraph", frameTimeArray.data(), static_cast<int>(frameTimeArray.size()), 0, nullptr,
@@ -1124,9 +1156,9 @@ bool MenuCommon::RenderMenu()
             {
                 if (Config::Instance()->FpsOverlayHorizontal.value_or_default())
                 {
-                    ImGui::SameLine(0.0f, 8.0f);
+                    ImGui::SameLine(0.0f, 0.0f);
                     ImGui::Text(" | ");
-                    ImGui::SameLine(0.0f, 8.0f);
+                    ImGui::SameLine(0.0f, 0.0f);
                 }
                 else
                 {
@@ -1138,13 +1170,8 @@ bool MenuCommon::RenderMenu()
 
             if (Config::Instance()->FpsOverlayType.value_or_default() > 3)
             {
-                ImVec2 plotSize(Config::Instance()->MenuScale.value() * 300, Config::Instance()->MenuScale.value() * 30);
-
                 if (Config::Instance()->FpsOverlayHorizontal.value_or_default())
-                {
-                    ImGui::SameLine(0.0f, 8.0f);
-                    plotSize.y = Config::Instance()->MenuScale.value() * 16;
-                }
+                    ImGui::SameLine(0.0f, 0.0f);
 
                 // Graph of upscaler times
                 ImGui::PlotLines("##UpscalerFrameTimeGraph", upscalerFrameTimeArray.data(), static_cast<int>(upscalerFrameTimeArray.size()), 0, nullptr,
@@ -1198,7 +1225,16 @@ bool MenuCommon::RenderMenu()
             frameTime /= frameCnt;
             frameRate = 1000.0 / frameTime;
 
-            ImGui_ImplWin32_NewFrame();
+            if (!_isUWP)
+            {
+                ImGui_ImplWin32_NewFrame();
+            }
+            else if (!newFrame)
+            {
+                ImVec2 displaySize{ State::Instance().screenWidth, State::Instance().screenHeight };
+                ImGui_ImplUwp_NewFrame(displaySize);
+            }
+
             MenuHdrCheck(io);
             MenuSizeCheck(io);
             ImGui::NewFrame();
@@ -1233,8 +1269,6 @@ bool MenuCommon::RenderMenu()
             style.MouseCursorScale = 1.0f;
             CopyMemory(style.Colors, styleold.Colors, sizeof(style.Colors)); // Restore colors		
         }
-
-        auto currentFeature = State::Instance().currentFeature;
 
         auto size = ImVec2{ 0.0f, 0.0f };
         ImGui::SetNextWindowSize(size);
@@ -1460,7 +1494,7 @@ bool MenuCommon::RenderMenu()
                         ImGui::BeginDisabled(!Config::Instance()->FGHUDFix.value_or_default());
 
                         ImGui::SameLine(0.0f, 16.0f);
-                        ImGui::PushItemWidth(95.0 * Config::Instance()->MenuScale.value_or_default());
+                        ImGui::PushItemWidth(95.0f * Config::Instance()->MenuScale.value_or_default());
                         int hudFixLimit = Config::Instance()->FGHUDLimit.value_or_default();
                         if (ImGui::InputInt("Limit", &hudFixLimit))
                         {
@@ -1538,7 +1572,7 @@ bool MenuCommon::RenderMenu()
                             ShowHelpMarker("Display only FSR 3.1 generated frames");
 
                             ImGui::BeginDisabled(State::Instance().FGresetCapturedResources);
-                            ImGui::PushItemWidth(95.0 * Config::Instance()->MenuScale.value_or_default());
+                            ImGui::PushItemWidth(95.0f * Config::Instance()->MenuScale.value_or_default());
                             if (ImGui::Checkbox("FG Create List", &State::Instance().FGcaptureResources))
                             {
                                 if (!State::Instance().FGcaptureResources)
@@ -1609,7 +1643,7 @@ bool MenuCommon::RenderMenu()
                                 ShowHelpMarker("Make a copy of depth to use with OptiFG\n"
                                                "For preventing corruptions that might happen");
 
-                                ImGui::PushItemWidth(115.0 * Config::Instance()->MenuScale.value_or_default());
+                                ImGui::PushItemWidth(115.0f * Config::Instance()->MenuScale.value_or_default());
                                 float depthScaleMax = Config::Instance()->FGDepthScaleMax.value_or_default();
                                 if (ImGui::InputFloat("FG Scale Depth Max", &depthScaleMax, 10.0f, 100.0f, "%.1f"))
                                     Config::Instance()->FGDepthScaleMax = depthScaleMax;
@@ -1640,7 +1674,7 @@ bool MenuCommon::RenderMenu()
                             ImGui::Spacing();
                             if (ImGui::TreeNode("FG Rectangle Settings"))
                             {
-                                ImGui::PushItemWidth(95.0 * Config::Instance()->MenuScale.value_or_default());
+                                ImGui::PushItemWidth(95.0f * Config::Instance()->MenuScale.value_or_default());
                                 int rectLeft = Config::Instance()->FGRectLeft.value_or(0);
                                 if (ImGui::InputInt("Rect Left", &rectLeft))
                                     Config::Instance()->FGRectLeft = rectLeft;
@@ -1693,7 +1727,7 @@ bool MenuCommon::RenderMenu()
 
                                     ImGui::BeginDisabled(!Config::Instance()->FGFramePacingTuning.value_or_default());
 
-                                    ImGui::PushItemWidth(115.0 * Config::Instance()->MenuScale.value_or_default());
+                                    ImGui::PushItemWidth(115.0f * Config::Instance()->MenuScale.value_or_default());
                                     auto fptSafetyMargin = Config::Instance()->FGFPTSafetyMarginInMs.value_or_default();
                                     if (ImGui::InputFloat("Safety Margins in ms", &fptSafetyMargin, 0.01, 0.1, "%.2f"))
                                         Config::Instance()->FGFPTSafetyMarginInMs = fptSafetyMargin;
@@ -1715,7 +1749,7 @@ bool MenuCommon::RenderMenu()
                                     ShowHelpMarker("Allows pacing spinlock to sleep, should reduce CPU usage\n"
                                                    "Might cause slow ramp up of FPS");
 
-                                    ImGui::PushItemWidth(115.0 * Config::Instance()->MenuScale.value_or_default());
+                                    ImGui::PushItemWidth(115.0f * Config::Instance()->MenuScale.value_or_default());
                                     auto fptHybridSpinTime = Config::Instance()->FGFPTHybridSpinTime.value_or_default();
                                     if (ImGui::SliderInt("Hybrid Spin Time", &fptHybridSpinTime, 0, 100))
                                         Config::Instance()->FGFPTHybridSpinTime = fptHybridSpinTime;
@@ -1906,7 +1940,7 @@ bool MenuCommon::RenderMenu()
                             ImGui::SameLine(0.0f, 6.0f);
                             int dbgCount = State::Instance().xessDebugFrames;
 
-                            ImGui::PushItemWidth(95.0 * Config::Instance()->MenuScale.value_or_default());
+                            ImGui::PushItemWidth(95.0f * Config::Instance()->MenuScale.value_or_default());
                             if (ImGui::InputInt("frames", &dbgCount))
                             {
                                 if (dbgCount < 4)
@@ -2130,7 +2164,7 @@ bool MenuCommon::RenderMenu()
 
                         ImGui::BeginDisabled(!Config::Instance()->RenderPresetOverride.value_or_default() || overridden);
 
-                        ImGui::PushItemWidth(135.0 * Config::Instance()->MenuScale.value_or_default());
+                        ImGui::PushItemWidth(135.0f * Config::Instance()->MenuScale.value_or_default());
                         if (usesDlssd)
                             AddDLSSDRenderPreset("Override Preset", &Config::Instance()->RenderPresetForAll);
                         else
@@ -2169,7 +2203,7 @@ bool MenuCommon::RenderMenu()
 
                             ImGui::BeginDisabled(!Config::Instance()->RenderPresetOverride.value_or_default() || overridden);
                             ImGui::Spacing();
-                            ImGui::PushItemWidth(135.0 * Config::Instance()->MenuScale.value_or_default());
+                            ImGui::PushItemWidth(135.0f * Config::Instance()->MenuScale.value_or_default());
 
                             if (usesDlssd)
                             {
@@ -2690,7 +2724,8 @@ bool MenuCommon::RenderMenu()
                                 auto accessToReactiveMask = State::Instance().currentFeature->AccessToReactiveMask();
                                 ImGui::BeginDisabled(!accessToReactiveMask);
 
-                                bool rm = Config::Instance()->DisableReactiveMask.value_or(!accessToReactiveMask || currentBackend == "dlss" || currentBackend == "xess");
+                                bool rm = Config::Instance()->DisableReactiveMask.value_or(!accessToReactiveMask || currentBackend == "dlss" ||
+                                                                                           (currentBackend == "xess" && !isVersionOrBetter(currentFeature->Version(), { 2, 0, 1 })));
                                 if (ImGui::Checkbox("Disable Reactive Mask", &rm))
                                 {
                                     Config::Instance()->DisableReactiveMask = rm;
@@ -3135,7 +3170,7 @@ bool MenuCommon::RenderMenu()
                     ImGui::Text("FrameTime");
                     auto ft = std::format("{:5.2f} ms / {:5.1f} fps", State::Instance().frameTimes.back(), frameRate);
                     std::vector<float> frameTimeArray(State::Instance().frameTimes.begin(), State::Instance().frameTimes.end());
-                    ImGui::PlotLines(ft.c_str(), frameTimeArray.data(), frameTimeArray.size());
+                    ImGui::PlotLines(ft.c_str(), frameTimeArray.data(), (int)frameTimeArray.size());
 
 
                     if (currentFeature != nullptr)
@@ -3144,7 +3179,7 @@ bool MenuCommon::RenderMenu()
                         ImGui::Text("Upscaler");
                         auto ups = std::format("{:7.4f} ms", State::Instance().upscaleTimes.back());
                         std::vector<float> upscaleTimeArray(State::Instance().upscaleTimes.begin(), State::Instance().upscaleTimes.end());
-                        ImGui::PlotLines(ups.c_str(), upscaleTimeArray.data(), upscaleTimeArray.size());
+                        ImGui::PlotLines(ups.c_str(), upscaleTimeArray.data(), (int)upscaleTimeArray.size());
                     }
 
                     ImGui::EndTable();
@@ -3210,7 +3245,7 @@ bool MenuCommon::RenderMenu()
                     _isVisible = false;
                     hasGamepad = (io.BackendFlags | ImGuiBackendFlags_HasGamepad) > 0;
                     io.BackendFlags &= 30;
-                    io.ConfigFlags = ImGuiConfigFlags_NavNoCaptureKeyboard | ImGuiConfigFlags_NoMouse | ImGuiConfigFlags_NoMouseCursorChange | ImGuiConfigFlags_NoKeyboard;
+                    io.ConfigFlags = ImGuiConfigFlags_NoMouse | ImGuiConfigFlags_NoMouseCursorChange | ImGuiConfigFlags_NoKeyboard;
 
                     if (pfn_ClipCursor_hooked)
                         pfn_ClipCursor(&_cursorLimit);
@@ -3409,10 +3444,11 @@ bool MenuCommon::RenderMenu()
     }
 }
 
-void MenuCommon::Init(HWND InHwnd)
+void MenuCommon::Init(HWND InHwnd, bool isUWP)
 {
     _handle = InHwnd;
     _isVisible = false;
+    _isUWP = isUWP;
 
     LOG_DEBUG("Handle: {0:X}", (size_t)_handle);
 
@@ -3425,17 +3461,28 @@ void MenuCommon::Init(HWND InHwnd)
 
     hasGamepad = (io.BackendFlags | ImGuiBackendFlags_HasGamepad) > 0;
     io.BackendFlags &= 30;
-    io.ConfigFlags = ImGuiConfigFlags_NavNoCaptureKeyboard | ImGuiConfigFlags_NoMouse | ImGuiConfigFlags_NoMouseCursorChange | ImGuiConfigFlags_NoKeyboard;
+    io.ConfigFlags = ImGuiConfigFlags_NoMouse | ImGuiConfigFlags_NoMouseCursorChange | ImGuiConfigFlags_NoKeyboard;
 
     io.MouseDrawCursor = _isVisible;
     io.WantCaptureKeyboard = _isVisible;
     io.WantCaptureMouse = _isVisible;
     io.WantSetMousePos = _isVisible;
 
-    io.IniFilename = io.LogFilename = nullptr; 
+    io.IniFilename = io.LogFilename = nullptr;
 
-    bool initResult = ImGui_ImplWin32_Init(InHwnd);
-    LOG_DEBUG("ImGui_ImplWin32_Init result: {0}", initResult);
+    bool initResult = false;
+
+    if (!isUWP)
+    {
+        ImGui_ImplWin32_Init(InHwnd);
+        LOG_DEBUG("ImGui_ImplWin32_Init result: {0}", initResult);
+    }
+    else
+    {
+        ImGui_ImplUwp_Init(InHwnd);
+        ImGui_BindUwpKeyUp(KeyUp);
+        LOG_DEBUG("ImGui_ImplUwp_Init result: {0}", initResult);
+    }
 
     MenuBase::UpdateFonts(io, Config::Instance()->MenuScale.value_or_default());
 
@@ -3444,7 +3491,7 @@ void MenuCommon::Init(HWND InHwnd)
         _hdrTonemapApplied = false;
     }
 
-    if (_oWndProc == nullptr)
+    if (_oWndProc == nullptr && !isUWP)
         _oWndProc = (WNDPROC)SetWindowLongPtr(InHwnd, GWLP_WNDPROC, (LONG_PTR)WndProc);
 
     LOG_DEBUG("_oWndProc: {0:X}", (ULONG64)_oWndProc);
@@ -3469,7 +3516,11 @@ void MenuCommon::Shutdown()
     if (pfn_SetCursorPos_hooked)
         DetachHooks();
 
-    ImGui_ImplWin32_Shutdown();
+    if (!_isUWP)
+        ImGui_ImplWin32_Shutdown();
+    else
+        ImGui_ImplUwp_Shutdown();
+
     ImGui::DestroyContext();
 
     _isInited = false;
@@ -3492,7 +3543,7 @@ void MenuCommon::HideMenu()
 
     RECT windowRect = {};
 
-    if (GetWindowRect(_handle, &windowRect))
+    if (!_isUWP && GetWindowRect(_handle, &windowRect))
     {
         auto x = windowRect.left + (windowRect.right - windowRect.left) / 2;
         auto y = windowRect.top + (windowRect.bottom - windowRect.top) / 2;

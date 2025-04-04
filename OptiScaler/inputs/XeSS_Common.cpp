@@ -2,61 +2,62 @@
 
 #include "XeSS_Base.h"
 
+#include <proxies/XeSS_Proxy.h>
 #include <nvsdk_ngx_vk.h>
 
 static std::optional<float> GetQualityOverrideRatio(const xess_quality_settings_t input)
 {
     std::optional<float> output;
 
-    auto sliderLimit = Config::Instance()->ExtendedLimits.value_or(false) ? 0.1f : 1.0f;
+    auto sliderLimit = Config::Instance()->ExtendedLimits.value_or_default() ? 0.1f : 1.0f;
 
-    if (Config::Instance()->UpscaleRatioOverrideEnabled.value_or(false) &&
-        Config::Instance()->UpscaleRatioOverrideValue.value_or(1.3f) >= sliderLimit)
+    if (Config::Instance()->UpscaleRatioOverrideEnabled.value_or_default() &&
+        Config::Instance()->UpscaleRatioOverrideValue.value_or_default() >= sliderLimit)
     {
-        output = Config::Instance()->UpscaleRatioOverrideValue.value_or(1.3f);
+        output = Config::Instance()->UpscaleRatioOverrideValue.value_or_default();
 
         return  output;
     }
 
-    if (!Config::Instance()->QualityRatioOverrideEnabled.value_or(false))
+    if (!Config::Instance()->QualityRatioOverrideEnabled.value_or_default())
         return output; // override not enabled
 
     switch (input)
     {
         case XESS_QUALITY_SETTING_ULTRA_PERFORMANCE:
-            if (Config::Instance()->QualityRatio_UltraPerformance.value_or(3.0) >= sliderLimit)
-                output = Config::Instance()->QualityRatio_UltraPerformance.value_or(3.0);
+            if (Config::Instance()->QualityRatio_UltraPerformance.value_or_default() >= sliderLimit)
+                output = Config::Instance()->QualityRatio_UltraPerformance.value_or_default();
 
             break;
 
         case XESS_QUALITY_SETTING_PERFORMANCE:
-            if (Config::Instance()->QualityRatio_Performance.value_or(2.0) >= sliderLimit)
-                output = Config::Instance()->QualityRatio_Performance.value_or(2.0);
+            if (Config::Instance()->QualityRatio_Performance.value_or_default() >= sliderLimit)
+                output = Config::Instance()->QualityRatio_Performance.value_or_default();
 
             break;
 
         case XESS_QUALITY_SETTING_BALANCED:
-            if (Config::Instance()->QualityRatio_Balanced.value_or(1.7) >= sliderLimit)
-                output = Config::Instance()->QualityRatio_Balanced.value_or(1.7);
+            if (Config::Instance()->QualityRatio_Balanced.value_or_default() >= sliderLimit)
+                output = Config::Instance()->QualityRatio_Balanced.value_or_default();
 
             break;
 
         case XESS_QUALITY_SETTING_QUALITY:
-            if (Config::Instance()->QualityRatio_Quality.value_or(1.5) >= sliderLimit)
-                output = Config::Instance()->QualityRatio_Quality.value_or(1.5);
+            if (Config::Instance()->QualityRatio_Quality.value_or_default() >= sliderLimit)
+                output = Config::Instance()->QualityRatio_Quality.value_or_default();
 
             break;
 
         case XESS_QUALITY_SETTING_ULTRA_QUALITY:
         case XESS_QUALITY_SETTING_ULTRA_QUALITY_PLUS:
-            if (Config::Instance()->QualityRatio_UltraQuality.value_or(1.3) >= sliderLimit)
-                output = Config::Instance()->QualityRatio_UltraQuality.value_or(1.3);
+            if (Config::Instance()->QualityRatio_UltraQuality.value_or_default() >= sliderLimit)
+                output = Config::Instance()->QualityRatio_UltraQuality.value_or_default();
 
             break;
 
         case XESS_QUALITY_SETTING_AA:
-            if (Config::Instance()->QualityRatio_DLAA.value_or(1.0) >= sliderLimit)
-                output = Config::Instance()->QualityRatio_DLAA.value_or(1.0);
+            if (Config::Instance()->QualityRatio_DLAA.value_or_default() >= sliderLimit)
+                output = Config::Instance()->QualityRatio_DLAA.value_or_default();
 
             break;
 
@@ -72,10 +73,10 @@ xess_result_t hk_xessGetVersion(xess_version_t* pVersion)
 {
     LOG_DEBUG("");
 
-    pVersion->major = 2;
-    pVersion->minor = 0;
-    pVersion->patch = 0;
-    pVersion->reserved = 0;
+    pVersion->major = XeSSProxy::Version().major;
+    pVersion->minor = XeSSProxy::Version().minor;
+    pVersion->patch = XeSSProxy::Version().patch;
+    pVersion->reserved = XeSSProxy::Version().reserved;
 
     return XESS_RESULT_SUCCESS;
 }
@@ -178,7 +179,7 @@ xess_result_t hk_xessGetInputResolution(xess_context_handle_t hContext, const xe
             case XESS_QUALITY_SETTING_ULTRA_PERFORMANCE:
                 OutHeight = (unsigned int)((float)pOutputResolution->y / 3.0);
                 OutWidth = (unsigned int)((float)pOutputResolution->x / 3.0);
-                scalingRatio = 0.33333333f;
+                scalingRatio = 1.0f / 3.0f;
                 break;
 
             case XESS_QUALITY_SETTING_PERFORMANCE:
@@ -271,8 +272,8 @@ xess_result_t hk_xessGetOptimalInputResolution(xess_context_handle_t hContext, c
 
     if (QualityRatio.has_value())
     {
-        OutHeight = (unsigned int)((float)pOutputResolution->x / QualityRatio.value());
-        OutWidth = (unsigned int)((float)pOutputResolution->y / QualityRatio.value());
+        OutHeight = (unsigned int)((float)pOutputResolution->y / QualityRatio.value());
+        OutWidth = (unsigned int)((float)pOutputResolution->x / QualityRatio.value());
         scalingRatio = 1.0f / QualityRatio.value();
     }
     else

@@ -12,7 +12,7 @@
 
 ## About
 
-**OptiScaler** is a tool that lets you replace upscalers in games that ***already support*** DLSS2+ / FSR2+ / XeSS, now also supports enabling frame generation (through OptiFG or Nukem's dlssg-to-fsr3).
+**OptiScaler** is a tool that lets you replace upscalers in games that ***already support*** DLSS2+ / FSR2+ / XeSS, now also supports enabling frame generation in those same games (through OptiFG or Nukem's dlssg-to-fsr3).
 
 While previously only DLSS2+ inputs were supported, newer versions also added support for XeSS and FSR2+ inputs (_with some caveats_$`^1`$). For example, if a game has DLSS only, the user can replace DLSS with XeSS or FSR 3.1 (same goes for an FSR or XeSS-only game). It also offers extensive customization options for all users, including those with Nvidia GPUs using DLSS.
 
@@ -48,7 +48,7 @@ While previously only DLSS2+ inputs were supported, newer versions also added su
 *This project is based on [PotatoOfDoom](https://github.com/PotatoOfDoom)'s excellent [CyberFSR2](https://github.com/PotatoOfDoom/CyberFSR2).*
 
 ## How it works?
-OptiScaler implements the necessary API methods of DLSS2+ & NVAPI, XeSS and FSR2+ to act as a middleware. It interprets calls from the game and redirects them to the chosen upscaling backend, allowing games using one technology to use another one of your choice. 
+OptiScaler implements the necessary API methods of DLSS2+ & NVAPI, XeSS and FSR2+ to act as a middleware. It intercepts upscaler calls from the game (_**Inputs**_) and redirects them to the chosen upscaling backend (_**Output**_), allowing games using one technology to use another  of your choice. 
 > [!NOTE]
 > Pressing **`Insert`** should open the Optiscaler **Overlay** in-game and expose all of the options (shortcut key can be changed in the config file).
 
@@ -69,9 +69,9 @@ Currently **OptiScaler** can be used with DirectX 11, DirectX 12 and Vulkan, but
 #### For DirectX 11
 - FSR2 2.2.1 (Default, native DX11)
 - FSR3 3.1.2 (unofficial port to native DX11)
-- XeSS 1.x.x, FSR2 2.1.2, 2.2.1, FSR3 3.1 & FSR2 2.3.2 (via background DX12 processing)$`^1`$
+- XeSS, FSR2 2.1.2, 2.2.1, FSR3 3.1 w/Dx12 (_via D3D11on12_)$`^1`$
 - DLSS (native DX11)
-- XeSS 2.x (_Intel ARC only_)
+- XeSS 2.x (native DX11, _Intel ARC only_)
 
 > [!NOTE]
 > <details>
@@ -87,7 +87,7 @@ Currently **OptiScaler** can be used with DirectX 11, DirectX 12 and Vulkan, but
 - XeSS 2.x
 
 #### OptiFG (powered by FSR3 FG) + HUDfix (experimental HUD ghosting fix) 
-**OptiFG** was added with **v0.7** and is **only supported in DX12**. It's **enabled by default** with the `FGType=auto` setting in Optiscaler.ini.  
+**OptiFG** was added with **v0.7** and is **only supported in DX12**. It's **not enabled by default** and can be enabled with the `FGType=optifg` setting in Optiscaler.ini.  
 It's an **experimental** way of adding FSR3 FG to games without native Frame Generation, or can also be used as a last case scenario if the native FG is not working properly.  
 Since FSR3 FG doesn't support HUD interpolation, it requires a HUDless resource to avoid HUD ghosting/garbling. In games without native FG, Optiscaler tries finding the HUDless resource when the user **enables HUDfix**. Depending on how the game draws its UI/HUD, Optiscaler may or may not be successful in finding it. There are several options for tuning the search.  
 A more detailed guide will be available in the [Wiki](https://github.com/cdozdil/OptiScaler/wiki), along with a **list** of **HUDfix incompatible** games.
@@ -104,7 +104,7 @@ A more detailed guide will be available in the [Wiki](https://github.com/cdozdil
 ---
 
 ### [Automated]
-**1.** Extract **all** of the Optiscaler files **by the main game exe** _(for Unreal Engine games, that's usually the _win_shipping.exe_ in one of the subfolders, generally `<path-to-game>\Game-or-Project-name\Binaries\Win64\`, **ignore** the `Engine` folder)_  
+**1.** Extract **all** of the Optiscaler files **by the main game exe** _(for Unreal Engine games, that's usually the _win_shipping.exe_ in one of the subfolders, generally `<path-to-game>\Game-or-Project-name\Binaries\Win64 or WinGDK\`, **ignore** the `Engine` folder)_  
 **2.** Try the `OptiScaler Setup.bat` script for automating the renaming process.  
 _**3.** If the Bat file wasn't successful, please check the **Manual** steps._
 
@@ -114,7 +114,7 @@ _**3.** If the Bat file wasn't successful, please check the **Manual** steps._
 #### Nvidia
 
 **`Step-by-step installation:`**  
-**1.** Extract **all** Optiscaler files from the zip **by the main game exe** _(for Unreal Engine games, that's usually the _win_shipping.exe_ in one of the subfolders, generally `<path-to-game>\Game-or-Project-name\Binaries\Win64\`, **ignore** the `Engine` folder)_.  
+**1.** Extract **all** Optiscaler files from the zip **by the main game exe** _(for Unreal Engine games, that's usually the _win_shipping.exe_ in one of the subfolders, generally `<path-to-game>\Game-or-Project-name\Binaries\Win64 or WinGDK\`, **ignore** the `Engine` folder)_.  
 **2.** Rename OptiScaler's `OptiScaler.dll` (for old versions, it's `nvngx.dll`) to one of the [supported filenames](#optiscaler-supports-these-filenames) (preferred `dxgi.dll`, but depends on the game)$`^1`$  
 
 > [!NOTE]
@@ -123,7 +123,7 @@ _**3.** If the Bat file wasn't successful, please check the **Manual** steps._
 #### AMD/Intel
 
 **`Step-by-step installation:`**  
-**1.** Extract **all** Optiscaler files from the zip **by the main game exe** _(for Unreal Engine games, that's usually the _win_shipping.exe_ in one of the subfolders, generally `<path-to-game>\Game-or-Project-name\Binaries\Win64\`, **ignore** the `Engine` folder)_  
+**1.** Extract **all** Optiscaler files from the zip **by the main game exe** _(for Unreal Engine games, that's usually the _win_shipping.exe_ in one of the subfolders, generally `<path-to-game>\Game-or-Project-name\Binaries\Win64 or WinGDK\`, **ignore** the `Engine` folder)_  
 **2.** Rename OptiScaler's `OptiScaler.dll` (for old versions, it's `nvngx.dll`) to one of the [supported filenames](#optiscaler-supports-these-filenames) (preferred `dxgi.dll`, but depends on the game)$`^1`$  
 **3a.** **Either** locate the `nvngx_dlss.dll` file (for UE games, generally in one of the subfolders under `Engine/Plugins`), create a copy, rename the copy to `nvngx.dll` and put it beside Optiscaler    
 **3b.** **OR** download `nvngx_dlss.dll` from e.g. [TechPowerUp](https://www.techpowerup.com/download/nvidia-dlss-dll/) or [Streamline SDK repo](https://github.com/NVIDIAGameWorks/Streamline/tree/main/bin/x64) if you don't want to search, rename it to `nvngx.dll` and put it beside Optiscaler   
@@ -167,18 +167,19 @@ _**Anti-Lag 2** only supports RDNA cards and is Windows only atm (shortcut for c
 > * version.dll
 > * wininet.dll
 > * winhttp.dll
-> * OptiScaler.asi (with an ASI loader)
+> * OptiScaler.asi (with an [ASI loader](https://github.com/ThirteenAG/Ultimate-ASI-Loader/releases))
 
 > [!NOTE]
-> ### _Example of correct installation (with additional Fakenvapi and Nukem mod)_
+> ### _Example of correct AMD/Intel installation (with additional Fakenvapi and Nukem mod)_
 > ![Installation](https://github.com/user-attachments/assets/977a2a68-d117-42ea-a928-78ec43eedd28)
 
 ---
 
 > [!NOTE]
-> If there is another mod (e.g. Reshade etc.) that uses the same filename (e.g. `dxgi.dll`), you can create a new folder called `plugins` and put other mod files in this folder. OptiScaler will check this folder and if it finds the same dll file (for example `dxgi.dll`), it will load this file instead of the original library.
-
-![image](https://github.com/cdozdil/OptiScaler/assets/35529761/c4bf2a85-107b-49ac-b002-59d00fd06982)
+> If there is another mod (e.g. **Reshade** etc.) that uses the same filename (e.g. `dxgi.dll`), you can create a new folder called `plugins` and put other mod files in this folder. OptiScaler will check this folder and if it finds the same dll file (for example `dxgi.dll`), it will load this file instead of the original library.  
+> Another option for **Reshade** - rename Reshade dll to `ReShade64.dll`, put it next to Optiscaler and set `LoadReshade=true` in OptiScaler.ini  
+>
+>![image](https://github.com/cdozdil/OptiScaler/assets/35529761/c4bf2a85-107b-49ac-b002-59d00fd06982)
 
 
 ### Legacy installation (deprecated, no FG and limited features, `nvngx.dll`)
@@ -187,7 +188,7 @@ _**Anti-Lag 2** only supports RDNA cards and is Windows only atm (shortcut for c
 
 `Step-by-step installation:`
 1. Download the latest relase from [releases](https://github.com/cdozdil/OptiScaler/releases).
-2. Extract the contents of the archive next to the game executable file in your games folder. (e.g. for Unreal Engine games, it's `<path-to-game>\Game-or-Project-name\Binaries\Win64\`)$`^1`$
+2. Extract the contents of the archive next to the game executable file in your games folder. (e.g. for Unreal Engine games, it's `<path-to-game>\Game-or-Project-name\Binaries\Win64 or WinGDK\`)$`^1`$
 3. Rename `OptiScaler.dll` to `nvngx.dll` (For older builds, file name is already `nvngx.dll`, so skip this step)
 4. Run `EnableSignatureOverride.reg` from `DlssOverrides` folder and confirm merge.$`^2`$$`^3`$
 

@@ -5,7 +5,10 @@
 #include "detours/detours.h"
 
 #include <dxgi1_6.h>
+#include <d3d12.h>
 #include <DbgHelp.h>
+
+//#define FILE_BASED_SPOOFING_CHECK
 
 #pragma region DXGI definitions
 
@@ -25,6 +28,15 @@ typedef HRESULT(*PFN_EnumAdapterByLuid)(IDXGIFactory4* This, LUID AdapterLuid, R
 typedef HRESULT(*PFN_EnumAdapters1)(IDXGIFactory1* This, UINT Adapter, IDXGIAdapter1** ppAdapter);
 typedef HRESULT(*PFN_EnumAdapters)(IDXGIFactory* This, UINT Adapter, IDXGIAdapter** ppAdapter);
 
+typedef HRESULT(*PFN_D3D12CreateDevice)(IUnknown*, D3D_FEATURE_LEVEL, REFIID, void**);
+typedef HRESULT(*PFN_D3D12SerializeRootSignature)(const D3D12_ROOT_SIGNATURE_DESC* pRootSignature, D3D_ROOT_SIGNATURE_VERSION Version, ID3DBlob** ppBlob, ID3DBlob** ppErrorBlob);
+typedef HRESULT(*PFN_D3D12CreateRootSignatureDeserializer)(LPCVOID pSrcData, SIZE_T SrcDataSizeInBytes, REFIID pRootSignatureDeserializerInterface, void** ppRootSignatureDeserializer);
+typedef HRESULT(*PFN_D3D12SerializeVersionedRootSignature)(const D3D12_VERSIONED_ROOT_SIGNATURE_DESC* pRootSignature, ID3DBlob** ppBlob, ID3DBlob** ppErrorBlob);
+typedef HRESULT(*PFN_D3D12CreateVersionedRootSignatureDeserializer)(LPCVOID pSrcData, SIZE_T SrcDataSizeInBytes, REFIID pRootSignatureDeserializerInterface, void** ppRootSignatureDeserializer);
+typedef HRESULT(*PFN_D3D12GetDebugInterface)(REFIID, void**);
+typedef HRESULT(*PFN_D3D12EnableExperimentalFeatures)(UINT NumFeatures, const IID* pIIDs, void* pConfigurationStructs, UINT* pConfigurationStructSizes);
+typedef HRESULT(*PFN_D3D12GetInterface)(REFCLSID, REFIID, void**);
+
 inline static PFN_GetDesc ptrGetDesc = nullptr;
 inline static PFN_GetDesc1 ptrGetDesc1 = nullptr;
 inline static PFN_GetDesc2 ptrGetDesc2 = nullptr;
@@ -35,8 +47,8 @@ inline static PFN_EnumAdapters1 ptrEnumAdapters1 = nullptr;
 inline static PFN_EnumAdapterByLuid ptrEnumAdapterByLuid = nullptr;
 inline static PFN_EnumAdapterByGpuPreference ptrEnumAdapterByGpuPreference = nullptr;
 
-inline bool skipGetModuleHandle = false;
-inline bool skipHighPerfCheck = false;
+inline static bool skipGetModuleHandle = false;
+inline static bool skipHighPerfCheck = false;
 
 void AttachToAdapter(IUnknown* unkAdapter);
 void AttachToFactory(IUnknown* unkFactory);
@@ -1836,6 +1848,55 @@ struct dbghelp_dll
     }
 } dbghelp;
 
+struct d3d12_dll
+{
+    HMODULE dll = nullptr;
+    FARPROC GetBehaviorValue = nullptr;
+    PFN_D3D12CreateDevice D3D12CreateDeviceLocal = nullptr;
+    PFN_D3D12GetDebugInterface D3D12GetDebugInterface = nullptr;
+    FARPROC SetAppCompatStringPointer = nullptr;
+    FARPROC D3D12CoreCreateLayeredDevice = nullptr;
+    FARPROC D3D12CoreGetLayeredDeviceSize = nullptr;
+    FARPROC D3D12CoreRegisterLayers = nullptr;
+    PFN_D3D12CreateRootSignatureDeserializer D3D12CreateRootSignatureDeserializer = nullptr;
+    PFN_D3D12CreateVersionedRootSignatureDeserializer D3D12CreateVersionedRootSignatureDeserializer = nullptr;
+    FARPROC D3D12DeviceRemovedExtendedData = nullptr;
+    PFN_D3D12EnableExperimentalFeatures D3D12EnableExperimentalFeatures = nullptr;
+    PFN_D3D12GetInterface D3D12GetInterface = nullptr;
+    FARPROC D3D12PIXEventsReplaceBlock = nullptr;
+    FARPROC D3D12PIXGetThreadInfo = nullptr;
+    FARPROC D3D12PIXNotifyWakeFromFenceSignal = nullptr;
+    FARPROC D3D12PIXReportCounter = nullptr;
+    PFN_D3D12SerializeRootSignature D3D12SerializeRootSignature = nullptr;
+    PFN_D3D12SerializeVersionedRootSignature D3D12SerializeVersionedRootSignature = nullptr;
+
+    void LoadOriginalLibrary(HMODULE module)
+    {
+        dll = module;
+        skipGetModuleHandle = true;
+
+        GetBehaviorValue = GetProcAddress(dll, "GetBehaviorValue");
+        D3D12CreateDeviceLocal = (PFN_D3D12CreateDevice)GetProcAddress(dll, "D3D12CreateDevice");
+        D3D12GetDebugInterface = (PFN_D3D12GetDebugInterface)GetProcAddress(dll, "D3D12GetDebugInterface");
+        SetAppCompatStringPointer = GetProcAddress(dll, "SetAppCompatStringPointer");
+        D3D12CoreCreateLayeredDevice = GetProcAddress(dll, "D3D12CoreCreateLayeredDevice");
+        D3D12CoreGetLayeredDeviceSize = GetProcAddress(dll, "D3D12CoreGetLayeredDeviceSize");
+        D3D12CoreRegisterLayers = GetProcAddress(dll, "D3D12CoreRegisterLayers");
+        D3D12CreateRootSignatureDeserializer = (PFN_D3D12CreateRootSignatureDeserializer)GetProcAddress(dll, "D3D12CreateRootSignatureDeserializer");
+        D3D12CreateVersionedRootSignatureDeserializer = (PFN_D3D12CreateVersionedRootSignatureDeserializer)GetProcAddress(dll, "D3D12CreateVersionedRootSignatureDeserializer");
+        D3D12DeviceRemovedExtendedData = GetProcAddress(dll, "D3D12DeviceRemovedExtendedData");
+        D3D12EnableExperimentalFeatures = (PFN_D3D12EnableExperimentalFeatures)GetProcAddress(dll, "D3D12EnableExperimentalFeatures");
+        D3D12GetInterface = (PFN_D3D12GetInterface)GetProcAddress(dll, "D3D12GetInterface");
+        D3D12PIXEventsReplaceBlock = GetProcAddress(dll, "D3D12PIXEventsReplaceBlock");
+        D3D12PIXGetThreadInfo = GetProcAddress(dll, "D3D12PIXGetThreadInfo");
+        D3D12PIXNotifyWakeFromFenceSignal = GetProcAddress(dll, "D3D12PIXNotifyWakeFromFenceSignal");
+        D3D12PIXReportCounter = GetProcAddress(dll, "D3D12PIXReportCounter");
+        D3D12SerializeRootSignature = (PFN_D3D12SerializeRootSignature)GetProcAddress(dll, "D3D12SerializeRootSignature");
+        D3D12SerializeVersionedRootSignature = (PFN_D3D12SerializeVersionedRootSignature)GetProcAddress(dll, "D3D12SerializeVersionedRootSignature");
+        skipGetModuleHandle = false;
+    }
+} d3d12;
+
 #pragma endregion
 
 #pragma region DXGI Adapter methods
@@ -1850,18 +1911,23 @@ bool SkipSpoofing()
 
     HANDLE process = GetCurrentProcess();
 
-    if (!skip && Config::Instance()->DxgiBlacklist.has_value() && process != nullptr)
+#ifdef FILE_BASED_SPOOFING_CHECK
+    if (!skip /*&& Config::Instance()->DxgiBlacklist.has_value()*/ && process != nullptr)
     {
         skip = true;
 
-        /*
-        * File based spoofing
+        //File based spoofing
         SymInitialize(process, NULL, TRUE);
 
         // Capture stack trace
         const int maxFrames = 64;
         void* stack[maxFrames];
         USHORT frames = CaptureStackBackTrace(0, maxFrames, stack, NULL);
+
+        size_t pos_streamline = std::string::npos;
+        size_t pos_intel = std::string::npos;
+        size_t pos_ffx = std::string::npos;
+        size_t pos_fsr = std::string::npos;
 
         for (USHORT i = 0; i < frames; ++i)
         {
@@ -1874,28 +1940,36 @@ bool SkipSpoofing()
                 if (GetModuleFileNameA((HINSTANCE)moduleBase, moduleName, MAX_PATH))
                 {
                     std::string module(moduleName);
-                    LOG_TRACE("ModuleName: {}", module);
 
-                    auto pos = module.rfind("\\sl.");
+                    if(pos_streamline == std::string::npos)
+                        pos_streamline = module.rfind("\\sl.");
 
-                    if (pos != std::string::npos)
-                    {
-                        LOG_INFO("spoofing for: {0}", module);
-                        skip = false;
-                        break;
-                    }
+                    if(pos_intel == std::string::npos)
+                        pos_intel = module.rfind("\\libxe");
+
+                    if(pos_ffx == std::string::npos)
+                        pos_ffx = module.rfind("\\amd_fidelityfx");
+
+                    if(pos_fsr == std::string::npos)
+                        pos_fsr = module.rfind("\\ffx_fsr");
                 }
             }
         }
 
         SymCleanup(process);
-        */
+
+        //&& pos_streamline == std::string::npos;
+        skip = pos_intel != std::string::npos && pos_ffx != std::string::npos && pos_fsr != std::string::npos;
+
+#else
+    if (!skip && Config::Instance()->DxgiBlacklist.has_value() && process != nullptr)
+    {
+        skip = true;
 
         // Walk the call stack to find the DLL that is calling the hooked function
         void* callers[100];
 
         unsigned short frames = CaptureStackBackTrace(0, 100, callers, NULL);
-        //HANDLE process = GetCurrentProcess();
 
         if (SymInitialize(process, NULL, TRUE))
         {
@@ -1929,6 +2003,7 @@ bool SkipSpoofing()
 
             SymCleanup(process);
         }
+#endif
 
         if (skip)
             LOG_DEBUG("skipping spoofing, blacklisting active");
@@ -2257,7 +2332,7 @@ HRESULT _CreateDXGIFactory(REFIID riid, IDXGIFactory** ppFactory)
 
         return result;
     }
-    else 
+    else
     {
         LOG_ERROR("CreateDxgiFactory is NULL");
         State::Instance().skipDxgiLoadChecks = false;
@@ -2277,7 +2352,7 @@ HRESULT _CreateDXGIFactory1(REFIID riid, IDXGIFactory1** ppFactory)
 
         return result;
     }
-    else 
+    else
     {
         LOG_ERROR("CreateDxgiFactory1 is NULL");
         State::Instance().skipDxgiLoadChecks = false;
@@ -3420,3 +3495,57 @@ void _EnumerateLoadedModules() { dbghelp.dbghelpEnumerateLoadedModules(); }
 void _EnumDirTreeW() { dbghelp.dbghelpEnumDirTreeW(); }
 void _EnumDirTree() { dbghelp.dbghelpEnumDirTree(); }
 void _DbgHelpCreateUserDumpW() { dbghelp.dbghelpDbgHelpCreateUserDumpW(); }
+
+// D3D12 exports
+
+HRESULT _D3D12CreateDevice(IUnknown* adapter, D3D_FEATURE_LEVEL minLevel, REFIID riid, void** ppDevice)
+{
+    auto result = d3d12.D3D12CreateDeviceLocal(adapter, minLevel, riid, ppDevice);
+    return result;
+}
+
+HRESULT _D3D12SerializeRootSignature(const D3D12_ROOT_SIGNATURE_DESC* pRootSignature, D3D_ROOT_SIGNATURE_VERSION Version, ID3DBlob** ppBlob, ID3DBlob** ppErrorBlob)
+{
+    return d3d12.D3D12SerializeRootSignature(pRootSignature, Version, ppBlob, ppErrorBlob);
+}
+
+HRESULT _D3D12CreateRootSignatureDeserializer(LPCVOID pSrcData, SIZE_T SrcDataSizeInBytes, REFIID pRootSignatureDeserializerInterface, void** ppRootSignatureDeserializer)
+{
+    return d3d12.D3D12CreateRootSignatureDeserializer(pSrcData, SrcDataSizeInBytes, pRootSignatureDeserializerInterface, ppRootSignatureDeserializer);
+}
+
+HRESULT _D3D12SerializeVersionedRootSignature(const D3D12_VERSIONED_ROOT_SIGNATURE_DESC* pRootSignature, ID3DBlob** ppBlob, ID3DBlob** ppErrorBlob)
+{
+    return d3d12.D3D12SerializeVersionedRootSignature(pRootSignature, ppBlob, ppErrorBlob);
+}
+
+HRESULT _D3D12CreateVersionedRootSignatureDeserializer(LPCVOID pSrcData, SIZE_T SrcDataSizeInBytes, REFIID pRootSignatureDeserializerInterface, void** ppRootSignatureDeserializer)
+{
+    return d3d12.D3D12CreateVersionedRootSignatureDeserializer(pSrcData, SrcDataSizeInBytes, pRootSignatureDeserializerInterface, ppRootSignatureDeserializer);
+}
+
+HRESULT _D3D12GetDebugInterface(REFIID riid, void** ppDebug)
+{
+    return d3d12.D3D12GetDebugInterface(riid, ppDebug);
+}
+
+HRESULT _D3D12EnableExperimentalFeatures(UINT NumFeatures, const IID* pIIDs, void* pConfigurationStructs, UINT * pConfigurationStructSizes)
+{
+    return d3d12.D3D12EnableExperimentalFeatures(NumFeatures, pIIDs, pConfigurationStructs, pConfigurationStructSizes);
+}
+
+HRESULT _D3D12GetInterface(REFCLSID clsid, REFIID riid, void** ppInterface)
+{
+    return d3d12.D3D12GetInterface(clsid, riid, ppInterface);
+}
+
+void _GetBehaviorValue() { d3d12.GetBehaviorValue(); }
+//void _SetAppCompatStringPointer() { d3d12.SetAppCompatStringPointer(); }
+void _D3D12CoreCreateLayeredDevice() { d3d12.D3D12CoreCreateLayeredDevice(); }
+void _D3D12CoreGetLayeredDeviceSize() { d3d12.D3D12CoreGetLayeredDeviceSize(); }
+void _D3D12CoreRegisterLayers() { d3d12.D3D12CoreRegisterLayers(); }
+void _D3D12DeviceRemovedExtendedData() { d3d12.D3D12DeviceRemovedExtendedData(); }
+void _D3D12PIXEventsReplaceBlock() { d3d12.D3D12PIXEventsReplaceBlock(); }
+void _D3D12PIXGetThreadInfo() { d3d12.D3D12PIXGetThreadInfo(); }
+void _D3D12PIXNotifyWakeFromFenceSignal() { d3d12.D3D12PIXNotifyWakeFromFenceSignal(); }
+void _D3D12PIXReportCounter() { d3d12.D3D12PIXReportCounter(); }
