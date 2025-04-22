@@ -420,10 +420,8 @@ static void CheckWorkingMode()
         {
             do
             {
-                // Hook kernel32 & kernelbase methods
                 // Moved here to cover agility sdk
-                InitFSR4Update();
-                KernelHooks::Hook();
+                KernelHooks::HookBase();
 
                 auto pluginFilePath = pluginPath / L"d3d12.dll";
                 dll = KernelBaseProxy::LoadLibraryExW_()(pluginFilePath.wstring().c_str(), NULL, 0);
@@ -481,11 +479,6 @@ static void CheckWorkingMode()
             Config::Instance()->OverlayMenu.set_volatile_value((!State::Instance().isWorkingAsNvngx || State::Instance().enablerAvailable) &&
                                                                Config::Instance()->OverlayMenu.value_or_default());
 
-            // Hook kernel32 & kernelbase methods
-            // Moved here to cover agility sdk
-            InitFSR4Update();
-            KernelHooks::Hook();
-
             // DXGI
             if (DxgiProxy::Module() == nullptr)
             {
@@ -518,6 +511,9 @@ static void CheckWorkingMode()
             // DirectX 12
             if (D3d12Proxy::Module() == nullptr)
             {
+                // Moved here to cover agility sdk
+                KernelHooks::HookBase();
+
                 LOG_DEBUG("Check for d3d12");
                 HMODULE d3d12Module = nullptr;
                 d3d12Module = KernelBaseProxy::GetModuleHandleW_()(L"d3d12.dll");
@@ -663,6 +659,9 @@ static void CheckWorkingMode()
                 reshadeHandle = KernelBaseProxy::LoadLibraryExW_()(rsFile.c_str(), NULL, 0);
                 LOG_INFO("Loading ReShade64.dll, result: {0:X}", (size_t)reshadeHandle);
             }
+
+            // Hook kernel32 methods 
+            KernelHooks::Hook();
         }
 
         return;
@@ -727,6 +726,16 @@ static void CheckQuirks()
     {
         State::Instance().gameQuirk = SplitFiction;
         LOG_INFO("Enabling a quirk for Split Fiction (Quick upscaler reinit)");
+    }
+    else if (exePathFilename == "minecraft.windows.exe")
+    {
+        State::Instance().gameQuirk = KernelBaseHooks;
+        LOG_INFO("Enabling a quirk for Minecraft (Enable KernelBase hooks)");
+    }
+    else if (exePathFilename == "nms.exe")
+    {
+        State::Instance().gameQuirk = KernelBaseHooks;
+        LOG_INFO("Enabling a quirk for No Man's Sky (Enable KernelBase hooks)");
     }
     else if (exePathFilename == "pathofexile.exe" || exePathFilename == "pathofexile_x64.exe" ||
              exePathFilename == "pathofexile_x64steam.exe" || exePathFilename == "pathofexilesteam.exe")
@@ -810,10 +819,10 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserv
     switch (ul_reason_for_call)
     {
         case DLL_PROCESS_ATTACH:
-            dllModule = hModule;
-            processId = GetCurrentProcessId();
-
             DisableThreadLibraryCalls(hModule);
+
+            dllModule = hModule;
+            processId = GetCurrentProcessId(); 
 
 #ifdef _DEBUG // VER_PRE_RELEASE
             // Enable file logging for pre builds
@@ -849,6 +858,9 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserv
             // Init Kernel proxies
             KernelBaseProxy::Init();
             Kernel32Proxy::Init();
+            
+            // Hook FSR4 stuff as early as possible
+            InitFSR4Update();
 
             // Check for Wine
             spdlog::info("");
@@ -863,7 +875,7 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserv
             if (Config::Instance()->DLSSEnabled.value_or_default())
             {
                 spdlog::info("");
-                State::Instance().isRunningOnNvidia = isNvidia();
+                State::Instance().isRunningOnNvidia = isNvidia(); 
 
                 if (State::Instance().isRunningOnNvidia)
                 {

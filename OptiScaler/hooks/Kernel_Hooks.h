@@ -777,6 +777,9 @@ private:
 
     static HMODULE LoadLibxess(std::wstring originalPath)
     {
+        if (XeSSProxy::Module() != nullptr)
+            return XeSSProxy::Module();
+
         HMODULE libxess = nullptr;
 
         if (Config::Instance()->XeSSLibrary.has_value())
@@ -815,6 +818,9 @@ private:
 
     static HMODULE LoadLibxessDx11(std::wstring originalPath)
     {
+        if (XeSSProxy::ModuleDx11() != nullptr)
+            return XeSSProxy::ModuleDx11();
+
         HMODULE libxess = nullptr;
 
         if (Config::Instance()->XeSSDx11Library.has_value())
@@ -853,6 +859,9 @@ private:
 
     static HMODULE LoadFfxapiDx12(std::wstring originalPath)
     {
+        if (FfxApiProxy::Dx12Module() != nullptr)
+            return FfxApiProxy::Dx12Module();
+
         HMODULE ffxDx12 = nullptr;
 
         if (Config::Instance()->FfxDx12Path.has_value())
@@ -891,6 +900,9 @@ private:
         
     static HMODULE LoadFfxapiVk(std::wstring originalPath)
     {
+        if (FfxApiProxy::VkModule() != nullptr)
+            return FfxApiProxy::VkModule();
+
         HMODULE ffxVk = nullptr;
 
         if (Config::Instance()->FfxVkPath.has_value())
@@ -1023,7 +1035,7 @@ private:
         std::wstring libName(lpLibFileName);
         std::wstring lcaseLibName(libName);
 
-        LOG_DEBUG("{}", wstring_to_string(lcaseLibName));
+        LOG_TRACE("{}", wstring_to_string(lcaseLibName));
 
         for (size_t i = 0; i < lcaseLibName.size(); i++)
             lcaseLibName[i] = std::tolower(lcaseLibName[i]);
@@ -1280,7 +1292,7 @@ private:
         if (Config::Instance()->FsrAgilitySDKUpgrade.value_or_default())
         {
             HMODULE mod_mainExe = nullptr;
-            Kernel32Proxy::GetModuleHandleExW_()(2u, 0i64, &mod_mainExe);
+            KernelBaseProxy::GetModuleHandleExW_()(2u, 0i64, &mod_mainExe);
             if (hModule == mod_mainExe && lpProcName != nullptr)
             {
                 if (strcmp(lpProcName, "D3D12SDKVersion") == 0)
@@ -1298,7 +1310,7 @@ private:
         }
 
         if (State::Instance().isRunningOnLinux && lpProcName != nullptr &&
-            hModule == Kernel32Proxy::GetModuleHandleW_()(L"gdi32.dll") && lstrcmpA(lpProcName, "D3DKMTEnumAdapters2") == 0)
+            hModule == KernelBaseProxy::GetModuleHandleW_()(L"gdi32.dll") && lstrcmpA(lpProcName, "D3DKMTEnumAdapters2") == 0)
             return (FARPROC)&customD3DKMTEnumAdapters2;
 
         return o_K32_GetProcAddress(hModule, lpProcName);
@@ -1321,7 +1333,7 @@ private:
         if (Config::Instance()->FsrAgilitySDKUpgrade.value_or_default())
         {
             HMODULE mod_mainExe = nullptr;
-            Kernel32Proxy::GetModuleHandleExW_()(2u, 0i64, &mod_mainExe);
+            KernelBaseProxy::GetModuleHandleExW_()(2u, 0i64, &mod_mainExe);
             if (hModule == mod_mainExe && lpProcName != nullptr)
             {
                 if (strcmp(lpProcName, "D3D12SDKVersion") == 0)
@@ -1339,7 +1351,7 @@ private:
         }
 
         if (State::Instance().isRunningOnLinux && lpProcName != nullptr &&
-            hModule == Kernel32Proxy::GetModuleHandleW_()(L"gdi32.dll") && lstrcmpA(lpProcName, "D3DKMTEnumAdapters2") == 0)
+            hModule == KernelBaseProxy::GetModuleHandleW_()(L"gdi32.dll") && lstrcmpA(lpProcName, "D3DKMTEnumAdapters2") == 0)
             return (FARPROC)&customD3DKMTEnumAdapters2;
 
         return o_KB_GetProcAddress(hModule, lpProcName);
@@ -1360,10 +1372,23 @@ public:
         o_K32_LoadLibraryExW = Kernel32Proxy::Hook_LoadLibraryExW(hk_K32_LoadLibraryExW);
         o_K32_GetProcAddress = Kernel32Proxy::Hook_GetProcAddress(hk_K32_GetProcAddress);
 
+    }
+
+    static void HookBase()
+    {
+        if (o_KB_GetProcAddress != nullptr)
+            return;
+
+        LOG_DEBUG("");
+
         // These hooks cause stability regressions
         //o_KB_FreeLibrary = KernelBaseProxy::Hook_FreeLibrary(hk_KB_FreeLibrary);
-        //o_KB_LoadLibraryExA = KernelBaseProxy::Hook_LoadLibraryExA(hk_KB_LoadLibraryExA);
-        //o_KB_LoadLibraryExW = KernelBaseProxy::Hook_LoadLibraryExW(hk_KB_LoadLibraryExW);
+        if (State::Instance().gameQuirk == KernelBaseHooks)
+        {
+            o_KB_LoadLibraryExA = KernelBaseProxy::Hook_LoadLibraryExA(hk_KB_LoadLibraryExA);
+            o_KB_LoadLibraryExW = KernelBaseProxy::Hook_LoadLibraryExW(hk_KB_LoadLibraryExW);
+        }
+
         o_KB_GetProcAddress = KernelBaseProxy::Hook_GetProcAddress(hk_KB_GetProcAddress);
     }
 };
