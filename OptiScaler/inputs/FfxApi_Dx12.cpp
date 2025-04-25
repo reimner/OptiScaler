@@ -15,6 +15,7 @@ static std::map<ffxContext, NVSDK_NGX_Handle*> _contexts;
 static ID3D12Device* _d3d12Device = nullptr;
 static bool _nvnxgInited = false;
 static float qualityRatios[] = { 1.0, 1.5, 1.7, 2.0, 3.0 };
+static size_t _contextCounter = 0;
 
 static bool CreateDLSSContext(ffxContext handle, const ffxDispatchDescUpscale* pExecParams)
 {
@@ -155,14 +156,6 @@ ffxReturnCode_t ffxCreateContext_Dx12(ffxContext* context, ffxCreateContextDescH
 
     LOG_DEBUG("type: {:X}", desc->type);
 
-    auto ffxApiResult = FfxApiProxy::D3D12_CreateContext()(context, desc, memCb);
-
-    if (ffxApiResult != FFX_API_RETURN_OK)
-    {
-        LOG_ERROR("D3D12_CreateContext error: {:X} ({})", (UINT)ffxApiResult, FfxApiProxy::ReturnCodeToString(ffxApiResult));
-        return ffxApiResult;
-    }
-
     bool upscaleContext = false;
     ffxApiHeader* header = desc;
     ffxCreateContextDescUpscale* createDesc = nullptr;
@@ -184,21 +177,54 @@ ffxReturnCode_t ffxCreateContext_Dx12(ffxContext* context, ffxCreateContextDescH
 
     } while (header != nullptr);
 
-    if (!upscaleContext)
-        return ffxApiResult;
-
-    NVSDK_NGX_FeatureCommonInfo fcInfo{};
-    wchar_t const** paths = new const wchar_t* [1];
-    auto dllPath = Util::DllPath().remove_filename().wstring();
-    paths[0] = dllPath.c_str();
-    fcInfo.PathListInfo.Path = paths;
-    fcInfo.PathListInfo.Length = 1;
-
-    if (!_nvnxgInited)
+    if (!upscaleContext || Config::Instance()->EnableHotSwapping.value_or_default())
     {
+        auto ffxApiResult = FfxApiProxy::D3D12_CreateContext()(context, desc, memCb);
+
+        if (ffxApiResult != FFX_API_RETURN_OK)
+            LOG_ERROR("D3D12_CreateContext error: {:X} ({})", (UINT)ffxApiResult, FfxApiProxy::ReturnCodeToString(ffxApiResult));
+
+        if (!upscaleContext)
+            return ffxApiResult;
+    }
+
+    if (!State::Instance().NvngxDx12Inited)
+    {
+        NVSDK_NGX_FeatureCommonInfo fcInfo{};
+
+        auto dllPath = Util::DllPath().remove_filename();
+        auto nvngxDlssPath = Util::FindFilePath(dllPath, "nvngx_dlss.dll");
+        auto nvngxDlssDPath = Util::FindFilePath(dllPath, "nvngx_dlssd.dll");
+        auto nvngxDlssGPath = Util::FindFilePath(dllPath, "nvngx_dlssg.dll");
+
+        std::vector<std::wstring> pathStorage;
+
+        pathStorage.push_back(dllPath.wstring());
+
+        if (nvngxDlssPath.has_value())
+            pathStorage.push_back(nvngxDlssPath.value().wstring());
+
+        if (nvngxDlssDPath.has_value())
+            pathStorage.push_back(nvngxDlssDPath.value().wstring());
+
+        if (nvngxDlssGPath.has_value())
+            pathStorage.push_back(nvngxDlssGPath.value().wstring());
+
+        if (Config::Instance()->DLSSFeaturePath.has_value())
+            pathStorage.push_back(Config::Instance()->DLSSFeaturePath.value());
+
+        // Build pointer array
+        wchar_t const** paths = new const wchar_t* [pathStorage.size()];
+        for (size_t i = 0; i < pathStorage.size(); ++i)
+        {
+            paths[i] = pathStorage[i].c_str();
+        }
+
+        fcInfo.PathListInfo.Path = paths;
+        fcInfo.PathListInfo.Length = (int)pathStorage.size();
 
         auto nvResult = NVSDK_NGX_D3D12_Init_with_ProjectID("OptiScaler", State::Instance().NVNGX_Engine, VER_PRODUCT_VERSION_STR, dllPath.c_str(),
-                                                            _d3d12Device, &fcInfo, State::Instance().NVNGX_Version);
+                                                            _d3d12Device, &fcInfo, State::Instance().NVNGX_Version == 0 ? NVSDK_NGX_Version_API : State::Instance().NVNGX_Version);
 
         if (nvResult != NVSDK_NGX_Result_Success)
             return FFX_API_RETURN_ERROR_RUNTIME_ERROR;
@@ -206,6 +232,11 @@ ffxReturnCode_t ffxCreateContext_Dx12(ffxContext* context, ffxCreateContextDescH
         _nvnxgInited = true;
     }
 
+    if (!Config::Instance()->EnableHotSwapping.value_or_default())
+    {
+        *context = (ffxContext)++_contextCounter;
+        LOG_INFO("Custom context index:{}", _contextCounter);
+    }
 
     NVSDK_NGX_Parameter* params = nullptr;
 
@@ -232,15 +263,22 @@ ffxReturnCode_t ffxDestroyContext_Dx12(ffxContext* context, const ffxAllocationC
 
     LOG_DEBUG("context: {:X}", (size_t)*context);
 
+    bool upscalerContext = false;
     if (_contexts.contains(*context))
+    {
         NVSDK_NGX_D3D12_ReleaseFeature(_contexts[*context]);
+        upscalerContext = true;
+    }
 
     _contexts.erase(*context);
     _nvParams.erase(*context);
     _initParams.erase(*context);
 
-    auto cdResult = FfxApiProxy::D3D12_DestroyContext()(context, memCb);
-    LOG_INFO("result: {:X}", (UINT)cdResult);
+    if (!upscalerContext || Config::Instance()->EnableHotSwapping.value_or_default())
+    {
+        auto cdResult = FfxApiProxy::D3D12_DestroyContext()(context, memCb);
+        LOG_INFO("result: {:X}", (UINT)cdResult);
+    }
 
     return FFX_API_RETURN_OK;
 }
@@ -250,9 +288,9 @@ ffxReturnCode_t ffxConfigure_Dx12(ffxContext* context, const ffxConfigureDescHea
     if (desc == nullptr)
         return FFX_API_RETURN_ERROR_PARAMETER;
 
-    LOG_DEBUG("type: {:X}", desc->type);
+    LOG_DEBUG("type: {:X} (UPSCALE_KEYVALUE: 0x00010007)", desc->type);
 
-    if (desc->type == FFX_API_CONFIGURE_DESC_TYPE_UPSCALE_KEYVALUE)
+    if (desc->type == FFX_API_CONFIGURE_DESC_TYPE_UPSCALE_KEYVALUE && !Config::Instance()->EnableHotSwapping.value_or_default())
         return FFX_API_RETURN_OK;
 
     return FfxApiProxy::D3D12_Configure()(context, desc);
@@ -292,14 +330,20 @@ ffxReturnCode_t ffxQuery_Dx12(ffxContext* context, ffxQueryDescHeader* desc)
 
         return FFX_API_RETURN_OK;
     }
-    
+
+    if (_contexts.contains(*context) && !Config::Instance()->EnableHotSwapping.value_or_default())
+    {
+        LOG_INFO("Hot swapping disabled, ignoring upscaler query");
+        return FFX_API_RETURN_OK;
+    }
+
     return FfxApiProxy::D3D12_Query()(context, desc);
 }
 
 ffxReturnCode_t ffxDispatch_Dx12(ffxContext* context, ffxDispatchDescHeader* desc)
 {
     // Skip OptiScaler stuff
-    if (!Config::Instance()->FfxInputs.value_or_default())
+    if (Config::Instance()->EnableHotSwapping.value_or_default() && !Config::Instance()->FfxInputs.value_or_default())
         return FfxApiProxy::D3D12_Dispatch()(context, desc);
 
     if (desc == nullptr || context == nullptr)
@@ -321,6 +365,8 @@ ffxReturnCode_t ffxDispatch_Dx12(ffxContext* context, ffxDispatchDescHeader* des
     {
         if (header->type == FFX_API_DISPATCH_DESC_TYPE_UPSCALE)
             dispatchDesc = (ffxDispatchDescUpscale*)header;
+        else if (!Config::Instance()->EnableHotSwapping.value_or_default() && header->type == FFX_API_DISPATCH_DESC_TYPE_UPSCALE_GENERATEREACTIVEMASK)
+            return FFX_API_RETURN_OK;
 
         header = header->pNext;
 
@@ -329,7 +375,7 @@ ffxReturnCode_t ffxDispatch_Dx12(ffxContext* context, ffxDispatchDescHeader* des
     if (dispatchDesc == nullptr)
     {
         LOG_INFO("dispatchDesc == nullptr, desc type: {:X}", desc->type);
-        return FfxApiProxy::D3D12_Dispatch()(context, desc);
+        return FFX_API_RETURN_ERROR_PARAMETER;
     }
 
     if (dispatchDesc->commandList == nullptr)

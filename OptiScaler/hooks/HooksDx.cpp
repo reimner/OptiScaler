@@ -3374,6 +3374,8 @@ static void HookCommandList(ID3D12Device* InDevice)
     if (o_OMSetRenderTargets != nullptr)
         return;
 
+    LOG_DEBUG("");
+
     ID3D12GraphicsCommandList* commandList = nullptr;
     ID3D12CommandAllocator* commandAllocator = nullptr;
 
@@ -3463,7 +3465,7 @@ static void HookToDevice(ID3D12Device* InDevice)
     if (o_CreateSampler != nullptr || InDevice == nullptr)
         return;
 
-    LOG_FUNC();
+    LOG_DEBUG("Dx12");
 
     // Get the vtable pointer
     PVOID* pVTable = *(PVOID**)InDevice;
@@ -3523,7 +3525,7 @@ static void HookToDevice(ID3D11Device* InDevice)
     if (o_CreateSamplerState != nullptr || InDevice == nullptr)
         return;
 
-    LOG_FUNC();
+    LOG_DEBUG("Dx11");
 
     // Get the vtable pointer
     PVOID* pVTable = *(PVOID**)InDevice;
@@ -4563,16 +4565,16 @@ void FrameGen_Dx12::CreateFGContext(ID3D12Device* InDevice, IFeature* deviceCont
 
     createFg.flags = 0;
 
-    if (deviceContext->GetFeatureFlags() & NVSDK_NGX_DLSS_Feature_Flags_IsHDR)
+    if (deviceContext->IsHdr())
         createFg.flags |= FFX_FRAMEGENERATION_ENABLE_HIGH_DYNAMIC_RANGE;
 
-    if (deviceContext->GetFeatureFlags() & NVSDK_NGX_DLSS_Feature_Flags_DepthInverted)
+    if (deviceContext->DepthInverted())
         createFg.flags |= FFX_FRAMEGENERATION_ENABLE_DEPTH_INVERTED;
 
-    if (deviceContext->GetFeatureFlags() & NVSDK_NGX_DLSS_Feature_Flags_MVJittered)
+    if (deviceContext->JitteredMV())
         createFg.flags |= FFX_FRAMEGENERATION_ENABLE_MOTION_VECTORS_JITTER_CANCELLATION;
 
-    if ((deviceContext->GetFeatureFlags() & NVSDK_NGX_DLSS_Feature_Flags_MVLowRes) == 0)
+    if (!deviceContext->LowResMV())
         createFg.flags |= FFX_FRAMEGENERATION_ENABLE_DISPLAY_RESOLUTION_MOTION_VECTORS;
 
     if (Config::Instance()->FGAsync.value_or_default())

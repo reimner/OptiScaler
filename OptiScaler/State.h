@@ -41,7 +41,13 @@ public:
         return instance;
     }
 
-    // Init flags
+    std::string GameName;
+    std::string GameExe;
+
+    bool NvngxDx11Inited = false;
+    bool NvngxDx12Inited = false;
+    bool NvngxVkInited = false;
+
     // Used per feature
     // Reseting on creation of new feature
     std::optional<bool> AutoExposure;
@@ -116,8 +122,8 @@ public:
     bool skipDxgiLoadChecks = false;
 
     // FSR3.x
-    std::vector<const char*> fsr3xVersionNames;
-    std::vector<uint64_t> fsr3xVersionIds;
+    std::vector<const char*> fsr3xVersionNames{};
+    std::vector<uint64_t> fsr3xVersionIds{};
 
     // Linux check
     bool isRunningOnLinux = false;
@@ -195,14 +201,35 @@ public:
         }
     };
 
+    static void DisableServeOriginal(UINT owner)
+    {
+        if (_serveOwner == 0 || _serveOwner == owner)
+        {
+            _serveOriginal = false;
+            _skipOwner = 0;
+        }
+    };
+
+    static void EnableServeOriginal(UINT owner)
+    {
+        if (_serveOwner == 0 || _serveOwner == owner)
+        {
+            _serveOriginal = true;
+            _skipOwner = owner;
+        }
+    };
+
     static bool SkipDllChecks() { return _skipChecks; }
     static std::string SkipDllName() { return _skipDllName; }
-
+    static bool ServeOriginal() { return _serveOriginal; }
 
 private:
     inline static bool _skipChecks = false;
     inline static std::string _skipDllName = "";
     inline static UINT _skipOwner = 0;
+    
+    inline static bool _serveOriginal = false;
+    inline static UINT _serveOwner = 0;
 
     State() = default;
 };
