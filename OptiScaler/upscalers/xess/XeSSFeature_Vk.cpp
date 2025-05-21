@@ -5,28 +5,43 @@ static std::string ResultToString(xess_result_t result)
 {
     switch (result)
     {
-        case XESS_RESULT_WARNING_NONEXISTING_FOLDER: return "Warning Nonexistent Folder";
-        case XESS_RESULT_WARNING_OLD_DRIVER: return "Warning Old Driver";
-        case XESS_RESULT_SUCCESS: return "Success";
-        case XESS_RESULT_ERROR_UNSUPPORTED_DEVICE: return "Unsupported Device";
-        case XESS_RESULT_ERROR_UNSUPPORTED_DRIVER: return "Unsupported Driver";
-        case XESS_RESULT_ERROR_UNINITIALIZED: return "Uninitialized";
-        case XESS_RESULT_ERROR_INVALID_ARGUMENT: return "Invalid Argument";
-        case XESS_RESULT_ERROR_DEVICE_OUT_OF_MEMORY: return "Device Out of Memory";
-        case XESS_RESULT_ERROR_DEVICE: return "Device Error";
-        case XESS_RESULT_ERROR_NOT_IMPLEMENTED: return "Not Implemented";
-        case XESS_RESULT_ERROR_INVALID_CONTEXT: return "Invalid Context";
-        case XESS_RESULT_ERROR_OPERATION_IN_PROGRESS: return "Operation in Progress";
-        case XESS_RESULT_ERROR_UNSUPPORTED: return "Unsupported";
-        case XESS_RESULT_ERROR_CANT_LOAD_LIBRARY: return "Cannot Load Library";
-        case XESS_RESULT_ERROR_UNKNOWN:
-        default: return "Unknown";
+    case XESS_RESULT_WARNING_NONEXISTING_FOLDER:
+        return "Warning Nonexistent Folder";
+    case XESS_RESULT_WARNING_OLD_DRIVER:
+        return "Warning Old Driver";
+    case XESS_RESULT_SUCCESS:
+        return "Success";
+    case XESS_RESULT_ERROR_UNSUPPORTED_DEVICE:
+        return "Unsupported Device";
+    case XESS_RESULT_ERROR_UNSUPPORTED_DRIVER:
+        return "Unsupported Driver";
+    case XESS_RESULT_ERROR_UNINITIALIZED:
+        return "Uninitialized";
+    case XESS_RESULT_ERROR_INVALID_ARGUMENT:
+        return "Invalid Argument";
+    case XESS_RESULT_ERROR_DEVICE_OUT_OF_MEMORY:
+        return "Device Out of Memory";
+    case XESS_RESULT_ERROR_DEVICE:
+        return "Device Error";
+    case XESS_RESULT_ERROR_NOT_IMPLEMENTED:
+        return "Not Implemented";
+    case XESS_RESULT_ERROR_INVALID_CONTEXT:
+        return "Invalid Context";
+    case XESS_RESULT_ERROR_OPERATION_IN_PROGRESS:
+        return "Operation in Progress";
+    case XESS_RESULT_ERROR_UNSUPPORTED:
+        return "Unsupported";
+    case XESS_RESULT_ERROR_CANT_LOAD_LIBRARY:
+        return "Cannot Load Library";
+    case XESS_RESULT_ERROR_UNKNOWN:
+    default:
+        return "Unknown";
     }
 }
 
 static xess_vk_image_view_info NV_to_XeSS(NVSDK_NGX_Resource_VK* nvResource)
 {
-    xess_vk_image_view_info xessResource{};
+    xess_vk_image_view_info xessResource {};
 
     xessResource.format = nvResource->Resource.ImageViewInfo.Format;
     xessResource.height = nvResource->Resource.ImageViewInfo.Height;
@@ -40,10 +55,12 @@ static xess_vk_image_view_info NV_to_XeSS(NVSDK_NGX_Resource_VK* nvResource)
 
 static void XeSSLogCallback(const char* Message, xess_logging_level_t Level)
 {
-    spdlog::log((spdlog::level::level_enum)((int)Level + 1), "XeSSFeature::LogCallback XeSS Runtime ({0})", Message);
+    spdlog::log((spdlog::level::level_enum)((int) Level + 1), "XeSSFeature::LogCallback XeSS Runtime ({0})", Message);
 }
 
-bool XeSSFeature_Vk::Init(VkInstance InInstance, VkPhysicalDevice InPD, VkDevice InDevice, VkCommandBuffer InCmdList, PFN_vkGetInstanceProcAddr InGIPA, PFN_vkGetDeviceProcAddr InGDPA, NVSDK_NGX_Parameter* InParameters)
+bool XeSSFeature_Vk::Init(VkInstance InInstance, VkPhysicalDevice InPD, VkDevice InDevice, VkCommandBuffer InCmdList,
+                          PFN_vkGetInstanceProcAddr InGIPA, PFN_vkGetDeviceProcAddr InGDPA,
+                          NVSDK_NGX_Parameter* InParameters)
 {
     LOG_FUNC();
 
@@ -96,7 +113,7 @@ bool XeSSFeature_Vk::Init(VkInstance InInstance, VkPhysicalDevice InPD, VkDevice
     ret = XeSSProxy::SetLoggingCallback()(_xessContext, XESS_LOGGING_LEVEL_DEBUG, XeSSLogCallback);
     LOG_DEBUG("xessSetLoggingCallback : {0}", ResultToString(ret));
 
-    xess_vk_init_params_t xessParams{};
+    xess_vk_init_params_t xessParams {};
 
     xessParams.initFlags = XESS_INIT_FLAG_NONE;
 
@@ -126,57 +143,58 @@ bool XeSSFeature_Vk::Init(VkInstance InInstance, VkPhysicalDevice InPD, VkDevice
 
     switch (PerfQualityValue())
     {
-        case NVSDK_NGX_PerfQuality_Value_UltraPerformance:
-            if (Version().major >= 1 && Version().minor >= 3)
-                xessParams.qualitySetting = XESS_QUALITY_SETTING_ULTRA_PERFORMANCE;
-            else
-                xessParams.qualitySetting = XESS_QUALITY_SETTING_PERFORMANCE;
+    case NVSDK_NGX_PerfQuality_Value_UltraPerformance:
+        if (Version().major >= 1 && Version().minor >= 3)
+            xessParams.qualitySetting = XESS_QUALITY_SETTING_ULTRA_PERFORMANCE;
+        else
+            xessParams.qualitySetting = XESS_QUALITY_SETTING_PERFORMANCE;
 
-            break;
+        break;
 
-        case NVSDK_NGX_PerfQuality_Value_MaxPerf:
-            if (Version().major >= 1 && Version().minor >= 3)
-                xessParams.qualitySetting = XESS_QUALITY_SETTING_BALANCED;
-            else
-                xessParams.qualitySetting = XESS_QUALITY_SETTING_PERFORMANCE;
+    case NVSDK_NGX_PerfQuality_Value_MaxPerf:
+        if (Version().major >= 1 && Version().minor >= 3)
+            xessParams.qualitySetting = XESS_QUALITY_SETTING_BALANCED;
+        else
+            xessParams.qualitySetting = XESS_QUALITY_SETTING_PERFORMANCE;
 
-            break;
+        break;
 
-        case NVSDK_NGX_PerfQuality_Value_Balanced:
-            if (Version().major >= 1 && Version().minor >= 3)
-                xessParams.qualitySetting = XESS_QUALITY_SETTING_QUALITY;
-            else
-                xessParams.qualitySetting = XESS_QUALITY_SETTING_BALANCED;
+    case NVSDK_NGX_PerfQuality_Value_Balanced:
+        if (Version().major >= 1 && Version().minor >= 3)
+            xessParams.qualitySetting = XESS_QUALITY_SETTING_QUALITY;
+        else
+            xessParams.qualitySetting = XESS_QUALITY_SETTING_BALANCED;
 
-            break;
+        break;
 
-        case NVSDK_NGX_PerfQuality_Value_MaxQuality:
-            if (Version().major >= 1 && Version().minor >= 3)
-                xessParams.qualitySetting = XESS_QUALITY_SETTING_ULTRA_QUALITY;
-            else
-                xessParams.qualitySetting = XESS_QUALITY_SETTING_QUALITY;
+    case NVSDK_NGX_PerfQuality_Value_MaxQuality:
+        if (Version().major >= 1 && Version().minor >= 3)
+            xessParams.qualitySetting = XESS_QUALITY_SETTING_ULTRA_QUALITY;
+        else
+            xessParams.qualitySetting = XESS_QUALITY_SETTING_QUALITY;
 
-            break;
+        break;
 
-        case NVSDK_NGX_PerfQuality_Value_UltraQuality:
-            if (Version().major >= 1 && Version().minor >= 3)
-                xessParams.qualitySetting = XESS_QUALITY_SETTING_ULTRA_QUALITY_PLUS;
-            else
-                xessParams.qualitySetting = XESS_QUALITY_SETTING_ULTRA_QUALITY;
+    case NVSDK_NGX_PerfQuality_Value_UltraQuality:
+        if (Version().major >= 1 && Version().minor >= 3)
+            xessParams.qualitySetting = XESS_QUALITY_SETTING_ULTRA_QUALITY_PLUS;
+        else
+            xessParams.qualitySetting = XESS_QUALITY_SETTING_ULTRA_QUALITY;
 
-            break;
+        break;
 
-        case NVSDK_NGX_PerfQuality_Value_DLAA:
-            if (Version().major >= 1 && Version().minor >= 3)
-                xessParams.qualitySetting = XESS_QUALITY_SETTING_AA;
-            else
-                xessParams.qualitySetting = XESS_QUALITY_SETTING_ULTRA_QUALITY;
+    case NVSDK_NGX_PerfQuality_Value_DLAA:
+        if (Version().major >= 1 && Version().minor >= 3)
+            xessParams.qualitySetting = XESS_QUALITY_SETTING_AA;
+        else
+            xessParams.qualitySetting = XESS_QUALITY_SETTING_ULTRA_QUALITY;
 
-            break;
+        break;
 
-        default:
-            xessParams.qualitySetting = XESS_QUALITY_SETTING_BALANCED; //Set out-of-range value for non-existing XESS_QUALITY_SETTING_BALANCED mode
-            break;
+    default:
+        xessParams.qualitySetting =
+            XESS_QUALITY_SETTING_BALANCED; // Set out-of-range value for non-existing XESS_QUALITY_SETTING_BALANCED mode
+        break;
     }
 
     if (Config::Instance()->OutputScalingEnabled.value_or(false) && LowResMV())
@@ -325,10 +343,12 @@ bool XeSSFeature_Vk::Init(VkInstance InInstance, VkPhysicalDevice InPD, VkDevice
 
     LOG_DEBUG("xessD3D12Init!");
 
-    if (Config::Instance()->NetworkModel.has_value() && Config::Instance()->NetworkModel.value() >= 0 && Config::Instance()->NetworkModel.value() <= 5)
+    if (Config::Instance()->NetworkModel.has_value() && Config::Instance()->NetworkModel.value() >= 0 &&
+    Config::Instance()->NetworkModel.value() <= 5)
     {
-        ret = XeSSProxy::SelectNetworkModel()(_xessContext, (xess_network_model_t)Config::Instance()->NetworkModel.value());
-        LOG_ERROR("xessSelectNetworkModel result: {0}", ResultToString(ret));
+        ret = XeSSProxy::SelectNetworkModel()(_xessContext,
+    (xess_network_model_t)Config::Instance()->NetworkModel.value()); LOG_ERROR("xessSelectNetworkModel result: {0}",
+    ResultToString(ret));
     }
     */
 
@@ -363,11 +383,12 @@ bool XeSSFeature_Vk::Evaluate(VkCommandBuffer InCmdBuffer, NVSDK_NGX_Parameter* 
     {
         LOG_ERROR("xessDebug");
 
-        xess_dump_parameters_t dumpParams{};
+        xess_dump_parameters_t dumpParams {};
         dumpParams.frame_count = State::Instance().xessDebugFrames;
         dumpParams.frame_idx = dumpCount;
         dumpParams.path = ".";
-        dumpParams.dump_elements_mask = XESS_DUMP_INPUT_COLOR | XESS_DUMP_INPUT_VELOCITY | XESS_DUMP_INPUT_DEPTH | XESS_DUMP_OUTPUT | XESS_DUMP_EXECUTION_PARAMETERS | XESS_DUMP_HISTORY;
+        dumpParams.dump_elements_mask = XESS_DUMP_INPUT_COLOR | XESS_DUMP_INPUT_VELOCITY | XESS_DUMP_INPUT_DEPTH |
+                                        XESS_DUMP_OUTPUT | XESS_DUMP_EXECUTION_PARAMETERS | XESS_DUMP_HISTORY;
 
         if (!Config::Instance()->DisableReactiveMask.value_or(true))
             dumpParams.dump_elements_mask |= XESS_DUMP_INPUT_RESPONSIVE_PIXEL_MASK;
@@ -378,7 +399,7 @@ bool XeSSFeature_Vk::Evaluate(VkCommandBuffer InCmdBuffer, NVSDK_NGX_Parameter* 
     }
 
     xess_result_t xessResult;
-    xess_vk_execute_params_t params{};
+    xess_vk_execute_params_t params {};
 
     InParameters->Get(NVSDK_NGX_Parameter_Jitter_Offset_X, &params.jitterOffsetX);
     InParameters->Get(NVSDK_NGX_Parameter_Jitter_Offset_Y, &params.jitterOffsetY);
@@ -399,7 +420,8 @@ bool XeSSFeature_Vk::Evaluate(VkCommandBuffer InCmdBuffer, NVSDK_NGX_Parameter* 
     LOG_DEBUG("Input Resolution: {0}x{1}", params.inputWidth, params.inputHeight);
 
     NVSDK_NGX_Resource_VK* paramColor = nullptr;
-    if (InParameters->Get(NVSDK_NGX_Parameter_Color, (void**)&paramColor) == NVSDK_NGX_Result_Success && paramColor != nullptr)
+    if (InParameters->Get(NVSDK_NGX_Parameter_Color, (void**) &paramColor) == NVSDK_NGX_Result_Success &&
+        paramColor != nullptr)
     {
         LOG_DEBUG("Color exist..");
         params.colorTexture = NV_to_XeSS(paramColor);
@@ -411,7 +433,8 @@ bool XeSSFeature_Vk::Evaluate(VkCommandBuffer InCmdBuffer, NVSDK_NGX_Parameter* 
     }
 
     NVSDK_NGX_Resource_VK* paramVelocity = nullptr;
-    if (InParameters->Get(NVSDK_NGX_Parameter_MotionVectors, (void**)&paramVelocity) == NVSDK_NGX_Result_Success && paramVelocity != nullptr)
+    if (InParameters->Get(NVSDK_NGX_Parameter_MotionVectors, (void**) &paramVelocity) == NVSDK_NGX_Result_Success &&
+        paramVelocity != nullptr)
     {
         LOG_DEBUG("MotionVectors exist..");
         params.velocityTexture = NV_to_XeSS(paramVelocity);
@@ -423,7 +446,8 @@ bool XeSSFeature_Vk::Evaluate(VkCommandBuffer InCmdBuffer, NVSDK_NGX_Parameter* 
     }
 
     NVSDK_NGX_Resource_VK* paramOutput = nullptr;
-    if (InParameters->Get(NVSDK_NGX_Parameter_Output, (void**)&paramOutput) == NVSDK_NGX_Result_Success && paramOutput != nullptr)
+    if (InParameters->Get(NVSDK_NGX_Parameter_Output, (void**) &paramOutput) == NVSDK_NGX_Result_Success &&
+        paramOutput != nullptr)
     {
         LOG_DEBUG("Output exist..");
         params.outputTexture = NV_to_XeSS(paramOutput);
@@ -435,7 +459,8 @@ bool XeSSFeature_Vk::Evaluate(VkCommandBuffer InCmdBuffer, NVSDK_NGX_Parameter* 
     }
 
     NVSDK_NGX_Resource_VK* paramDepth = nullptr;
-    if (InParameters->Get(NVSDK_NGX_Parameter_Depth, (void**)&paramDepth) == NVSDK_NGX_Result_Success && paramDepth != nullptr)
+    if (InParameters->Get(NVSDK_NGX_Parameter_Depth, (void**) &paramDepth) == NVSDK_NGX_Result_Success &&
+        paramDepth != nullptr)
     {
         LOG_DEBUG("Depth exist..");
         params.depthTexture = NV_to_XeSS(paramDepth);
@@ -452,7 +477,8 @@ bool XeSSFeature_Vk::Evaluate(VkCommandBuffer InCmdBuffer, NVSDK_NGX_Parameter* 
     if (!AutoExposure())
     {
         NVSDK_NGX_Resource_VK* paramExp = nullptr;
-        if (InParameters->Get(NVSDK_NGX_Parameter_ExposureTexture, (void**)&paramExp) == NVSDK_NGX_Result_Success && paramExp != nullptr)
+        if (InParameters->Get(NVSDK_NGX_Parameter_ExposureTexture, (void**) &paramExp) == NVSDK_NGX_Result_Success &&
+            paramExp != nullptr)
         {
             LOG_DEBUG("ExposureTexture exist..");
             params.exposureScaleTexture = NV_to_XeSS(paramExp);
@@ -468,16 +494,18 @@ bool XeSSFeature_Vk::Evaluate(VkCommandBuffer InCmdBuffer, NVSDK_NGX_Parameter* 
     else
         LOG_DEBUG("AutoExposure enabled!");
 
-
     NVSDK_NGX_Resource_VK* paramReactiveMask = nullptr;
-    if (isVersionOrBetter(Version(), { 2, 0, 1 }) && InParameters->Get("FSR.reactive", (void**)&paramReactiveMask) == NVSDK_NGX_Result_Success)
+    if (isVersionOrBetter(Version(), { 2, 0, 1 }) &&
+        InParameters->Get("FSR.reactive", (void**) &paramReactiveMask) == NVSDK_NGX_Result_Success)
     {
         if (!Config::Instance()->DisableReactiveMask.value_or(true))
             params.responsivePixelMaskTexture = NV_to_XeSS(paramReactiveMask);
     }
     else
     {
-        if (InParameters->Get(NVSDK_NGX_Parameter_DLSS_Input_Bias_Current_Color_Mask, (void**)&paramReactiveMask) == NVSDK_NGX_Result_Success && paramReactiveMask != nullptr)
+        if (InParameters->Get(NVSDK_NGX_Parameter_DLSS_Input_Bias_Current_Color_Mask, (void**) &paramReactiveMask) ==
+                NVSDK_NGX_Result_Success &&
+            paramReactiveMask != nullptr)
         {
             LOG_DEBUG("Input Bias mask exist..");
             Config::Instance()->DisableReactiveMask = false;
@@ -521,6 +549,19 @@ bool XeSSFeature_Vk::Evaluate(VkCommandBuffer InCmdBuffer, NVSDK_NGX_Parameter* 
     else
         LOG_WARN("Can't get motion vector scales!");
 
+    InParameters->Get(NVSDK_NGX_Parameter_DLSS_Input_Color_Subrect_Base_X, &params.inputColorBase.x);
+    InParameters->Get(NVSDK_NGX_Parameter_DLSS_Input_Color_Subrect_Base_Y, &params.inputColorBase.y);
+    InParameters->Get(NVSDK_NGX_Parameter_DLSS_Input_Depth_Subrect_Base_X, &params.inputDepthBase.x);
+    InParameters->Get(NVSDK_NGX_Parameter_DLSS_Input_Depth_Subrect_Base_Y, &params.inputDepthBase.y);
+    InParameters->Get(NVSDK_NGX_Parameter_DLSS_Input_MV_SubrectBase_X, &params.inputMotionVectorBase.x);
+    InParameters->Get(NVSDK_NGX_Parameter_DLSS_Input_MV_SubrectBase_Y, &params.inputMotionVectorBase.y);
+    InParameters->Get(NVSDK_NGX_Parameter_DLSS_Output_Subrect_Base_X, &params.outputColorBase.x);
+    InParameters->Get(NVSDK_NGX_Parameter_DLSS_Output_Subrect_Base_Y, &params.outputColorBase.y);
+    InParameters->Get(NVSDK_NGX_Parameter_DLSS_Input_Bias_Current_Color_SubrectBase_X,
+                      &params.inputResponsiveMaskBase.x);
+    InParameters->Get(NVSDK_NGX_Parameter_DLSS_Input_Bias_Current_Color_SubrectBase_Y,
+                      &params.inputResponsiveMaskBase.y);
+
     LOG_DEBUG("Executing!!");
     xessResult = XeSSProxy::VKExecute()(_xessContext, InCmdBuffer, &params);
 
@@ -535,7 +576,8 @@ bool XeSSFeature_Vk::Evaluate(VkCommandBuffer InCmdBuffer, NVSDK_NGX_Parameter* 
     return true;
 }
 
-XeSSFeature_Vk::XeSSFeature_Vk(unsigned int handleId, NVSDK_NGX_Parameter* InParameters) : IFeature(handleId, InParameters), IFeature_Vk(handleId, InParameters)
+XeSSFeature_Vk::XeSSFeature_Vk(unsigned int handleId, NVSDK_NGX_Parameter* InParameters)
+    : IFeature(handleId, InParameters), IFeature_Vk(handleId, InParameters)
 {
     _initParameters = SetInitParameters(InParameters);
 
@@ -545,8 +587,4 @@ XeSSFeature_Vk::XeSSFeature_Vk(unsigned int handleId, NVSDK_NGX_Parameter* InPar
     _moduleLoaded = XeSSProxy::Module() != nullptr && XeSSProxy::VKCreateContext() != nullptr;
 }
 
-XeSSFeature_Vk::~XeSSFeature_Vk()
-{
-    if (State::Instance().isShuttingDown)
-        return;
-}
+XeSSFeature_Vk::~XeSSFeature_Vk() {}

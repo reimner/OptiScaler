@@ -6,12 +6,15 @@
 
 #include "FSR31Feature_Dx11On12.h"
 
-NVSDK_NGX_Parameter* FSR31FeatureDx11on12::SetParameters(NVSDK_NGX_Parameter* InParameters) {
+NVSDK_NGX_Parameter* FSR31FeatureDx11on12::SetParameters(NVSDK_NGX_Parameter* InParameters)
+{
     InParameters->Set("OptiScaler.SupportsUpscaleSize", true);
     return InParameters;
 }
 
-FSR31FeatureDx11on12::FSR31FeatureDx11on12(unsigned int InHandleId, NVSDK_NGX_Parameter* InParameters) : FSR31Feature(InHandleId, InParameters), IFeature_Dx11wDx12(InHandleId, InParameters), IFeature_Dx11(InHandleId, InParameters), IFeature(InHandleId, SetParameters(InParameters))
+FSR31FeatureDx11on12::FSR31FeatureDx11on12(unsigned int InHandleId, NVSDK_NGX_Parameter* InParameters)
+    : FSR31Feature(InHandleId, InParameters), IFeature_Dx11wDx12(InHandleId, InParameters),
+      IFeature_Dx11(InHandleId, InParameters), IFeature(InHandleId, SetParameters(InParameters))
 {
     _moduleLoaded = FfxApiProxy::InitFfxDx12();
 
@@ -21,7 +24,8 @@ FSR31FeatureDx11on12::FSR31FeatureDx11on12(unsigned int InHandleId, NVSDK_NGX_Pa
         LOG_ERROR("can't load amd_fidelityfx_dx12.dll methods!");
 }
 
-bool FSR31FeatureDx11on12::Init(ID3D11Device* InDevice, ID3D11DeviceContext* InContext, NVSDK_NGX_Parameter* InParameters)
+bool FSR31FeatureDx11on12::Init(ID3D11Device* InDevice, ID3D11DeviceContext* InContext,
+                                NVSDK_NGX_Parameter* InParameters)
 {
     LOG_FUNC();
 
@@ -44,7 +48,7 @@ bool FSR31FeatureDx11on12::Evaluate(ID3D11DeviceContext* InDeviceContext, NVSDK_
         // to prevent creation dx12 device if we are going to recreate feature
         ID3D11Resource* paramVelocity = nullptr;
         if (InParameters->Get(NVSDK_NGX_Parameter_MotionVectors, &paramVelocity) != NVSDK_NGX_Result_Success)
-            InParameters->Get(NVSDK_NGX_Parameter_MotionVectors, (void**)&paramVelocity);
+            InParameters->Get(NVSDK_NGX_Parameter_MotionVectors, (void**) &paramVelocity);
 
         if (AutoExposure())
         {
@@ -54,7 +58,7 @@ bool FSR31FeatureDx11on12::Evaluate(ID3D11DeviceContext* InDeviceContext, NVSDK_
         {
             ID3D11Resource* paramExpo = nullptr;
             if (InParameters->Get(NVSDK_NGX_Parameter_ExposureTexture, &paramExpo) != NVSDK_NGX_Result_Success)
-                InParameters->Get(NVSDK_NGX_Parameter_ExposureTexture, (void**)&paramExpo);
+                InParameters->Get(NVSDK_NGX_Parameter_ExposureTexture, (void**) &paramExpo);
 
             if (paramExpo == nullptr)
             {
@@ -64,8 +68,9 @@ bool FSR31FeatureDx11on12::Evaluate(ID3D11DeviceContext* InDeviceContext, NVSDK_
         }
 
         ID3D11Resource* paramReactiveMask = nullptr;
-        if (InParameters->Get(NVSDK_NGX_Parameter_DLSS_Input_Bias_Current_Color_Mask, &paramReactiveMask) != NVSDK_NGX_Result_Success)
-            InParameters->Get(NVSDK_NGX_Parameter_DLSS_Input_Bias_Current_Color_Mask, (void**)&paramReactiveMask);
+        if (InParameters->Get(NVSDK_NGX_Parameter_DLSS_Input_Bias_Current_Color_Mask, &paramReactiveMask) !=
+            NVSDK_NGX_Result_Success)
+            InParameters->Get(NVSDK_NGX_Parameter_DLSS_Input_Bias_Current_Color_Mask, (void**) &paramReactiveMask);
         _accessToReactiveMask = paramReactiveMask != nullptr;
 
         if (!Config::Instance()->DisableReactiveMask.has_value())
@@ -138,6 +143,9 @@ bool FSR31FeatureDx11on12::Evaluate(ID3D11DeviceContext* InDeviceContext, NVSDK_
         Dx11DeviceContext = dc;
     }
 
+    if (dc != nullptr)
+        dc->Release();
+
     struct ffxDispatchDescUpscale params = { 0 };
     params.header.type = FFX_API_DISPATCH_DESC_TYPE_UPSCALE;
 
@@ -181,341 +189,333 @@ bool FSR31FeatureDx11on12::Evaluate(ID3D11DeviceContext* InDeviceContext, NVSDK_
 
     LOG_DEBUG("Input Resolution: {0}x{1}", params.renderSize.width, params.renderSize.height);
 
-    params.commandList = Dx12CommandList;
+    auto frame = _frameCount % 2;
+    auto cmdList = Dx12CommandList[frame];
 
-    if (!ProcessDx11Textures(InParameters))
+    params.commandList = cmdList;
+
+    ffxReturnCode_t ffxresult = FFX_API_RETURN_ERROR;
+
+    do
     {
-        LOG_ERROR("Can't process Dx11 textures!");
-
-        Dx12CommandList->Close();
-        ID3D12CommandList* ppCommandLists[] = { Dx12CommandList };
-        Dx12CommandQueue->ExecuteCommandLists(1, ppCommandLists);
-
-        Dx12CommandAllocator->Reset();
-        Dx12CommandList->Reset(Dx12CommandAllocator, nullptr);
-
-        return false;
-    }
-
-    // AutoExposure or ReactiveMask is nullptr
-    if (State::Instance().changeBackend[Handle()->Id])
-    {
-        Dx12CommandList->Close();
-        ID3D12CommandList* ppCommandLists[] = { Dx12CommandList };
-        Dx12CommandQueue->ExecuteCommandLists(1, ppCommandLists);
-
-        Dx12CommandAllocator->Reset();
-        Dx12CommandList->Reset(Dx12CommandAllocator, nullptr);
-
-        return true;
-    }
-
-    params.color = ffxApiGetResourceDX12(dx11Color.Dx12Resource, FFX_API_RESOURCE_STATE_COMPUTE_READ);
-    params.motionVectors = ffxApiGetResourceDX12(dx11Mv.Dx12Resource, FFX_API_RESOURCE_STATE_COMPUTE_READ);
-    params.depth = ffxApiGetResourceDX12(dx11Depth.Dx12Resource, FFX_API_RESOURCE_STATE_COMPUTE_READ);
-    params.exposure = ffxApiGetResourceDX12(dx11Exp.Dx12Resource, FFX_API_RESOURCE_STATE_COMPUTE_READ);
-
-    if (dx11Reactive.Dx12Resource != nullptr)
-    {
-        if (Config::Instance()->FsrUseMaskForTransparency.value_or_default())
-            params.transparencyAndComposition = ffxApiGetResourceDX12(dx11Reactive.Dx12Resource, FFX_API_RESOURCE_STATE_COMPUTE_READ);
-
-        if (Config::Instance()->DlssReactiveMaskBias.value_or_default() > 0.0f &&
-            Bias->IsInit() && Bias->CreateBufferResource(Dx12Device, dx11Reactive.Dx12Resource, D3D12_RESOURCE_STATE_UNORDERED_ACCESS) && Bias->CanRender())
+        if (!ProcessDx11Textures(InParameters))
         {
-            Bias->SetBufferState(Dx12CommandList, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+            LOG_ERROR("Can't process Dx11 textures!");
+            break;
+        }
 
-            if (Bias->Dispatch(Dx12Device, Dx12CommandList, dx11Reactive.Dx12Resource, Config::Instance()->DlssReactiveMaskBias.value_or_default(), Bias->Buffer()))
+        if (State::Instance().changeBackend[Handle()->Id])
+        {
+            break;
+        }
+
+        params.color = ffxApiGetResourceDX12(dx11Color.Dx12Resource, FFX_API_RESOURCE_STATE_COMPUTE_READ);
+        params.motionVectors = ffxApiGetResourceDX12(dx11Mv.Dx12Resource, FFX_API_RESOURCE_STATE_COMPUTE_READ);
+        params.depth = ffxApiGetResourceDX12(dx11Depth.Dx12Resource, FFX_API_RESOURCE_STATE_COMPUTE_READ);
+        params.exposure = ffxApiGetResourceDX12(dx11Exp.Dx12Resource, FFX_API_RESOURCE_STATE_COMPUTE_READ);
+
+        if (dx11Reactive.Dx12Resource != nullptr)
+        {
+            if (Config::Instance()->FsrUseMaskForTransparency.value_or_default())
+                params.transparencyAndComposition =
+                    ffxApiGetResourceDX12(dx11Reactive.Dx12Resource, FFX_API_RESOURCE_STATE_COMPUTE_READ);
+
+            if (Config::Instance()->DlssReactiveMaskBias.value_or_default() > 0.0f && Bias->IsInit() &&
+                Bias->CreateBufferResource(Dx12Device, dx11Reactive.Dx12Resource,
+                                           D3D12_RESOURCE_STATE_UNORDERED_ACCESS) &&
+                Bias->CanRender())
             {
-                Bias->SetBufferState(Dx12CommandList, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-                params.reactive = ffxApiGetResourceDX12(Bias->Buffer(), FFX_API_RESOURCE_STATE_COMPUTE_READ);
+                Bias->SetBufferState(cmdList, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+
+                if (Bias->Dispatch(Dx12Device, cmdList, dx11Reactive.Dx12Resource,
+                                   Config::Instance()->DlssReactiveMaskBias.value_or_default(), Bias->Buffer()))
+                {
+                    Bias->SetBufferState(cmdList, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+                    params.reactive = ffxApiGetResourceDX12(Bias->Buffer(), FFX_API_RESOURCE_STATE_COMPUTE_READ);
+                }
             }
         }
-    }
 
-    // Output Scaling
-    if (useSS)
-    {
-        if (OutputScaler->CreateBufferResource(Dx12Device, dx11Out.Dx12Resource, TargetWidth(), TargetHeight(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS))
+        // Output Scaling
+        if (useSS)
         {
-            OutputScaler->SetBufferState(Dx12CommandList, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-            params.output = ffxApiGetResourceDX12(OutputScaler->Buffer(), FFX_API_RESOURCE_STATE_UNORDERED_ACCESS);
+            if (OutputScaler->CreateBufferResource(Dx12Device, dx11Out.Dx12Resource, TargetWidth(), TargetHeight(),
+                                                   D3D12_RESOURCE_STATE_UNORDERED_ACCESS))
+            {
+                OutputScaler->SetBufferState(cmdList, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+                params.output = ffxApiGetResourceDX12(OutputScaler->Buffer(), FFX_API_RESOURCE_STATE_UNORDERED_ACCESS);
+            }
+            else
+                params.output = ffxApiGetResourceDX12(dx11Out.Dx12Resource, FFX_API_RESOURCE_STATE_UNORDERED_ACCESS);
         }
         else
             params.output = ffxApiGetResourceDX12(dx11Out.Dx12Resource, FFX_API_RESOURCE_STATE_UNORDERED_ACCESS);
-    }
-    else
-        params.output = ffxApiGetResourceDX12(dx11Out.Dx12Resource, FFX_API_RESOURCE_STATE_UNORDERED_ACCESS);
 
-    // RCAS
-    if (Config::Instance()->RcasEnabled.value_or_default() &&
-        (_sharpness > 0.0f || (Config::Instance()->MotionSharpnessEnabled.value_or_default() && Config::Instance()->MotionSharpness.value_or_default() > 0.0f)) &&
-        RCAS->IsInit() && RCAS->CreateBufferResource(Dx12Device, (ID3D12Resource*)params.output.resource, D3D12_RESOURCE_STATE_UNORDERED_ACCESS))
-    {
-        RCAS->SetBufferState(Dx12CommandList, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-        params.output = ffxApiGetResourceDX12(RCAS->Buffer(), FFX_API_RESOURCE_STATE_UNORDERED_ACCESS);
-    }
-
-    _hasColor = params.color.resource != nullptr;
-    _hasDepth = params.depth.resource != nullptr;
-    _hasMV = params.motionVectors.resource != nullptr;
-    _hasExposure = params.exposure.resource != nullptr;
-    _hasTM = params.transparencyAndComposition.resource != nullptr;
-    _hasOutput = params.output.resource != nullptr;
-
-#pragma endregion
-
-    float MVScaleX = 1.0f;
-    float MVScaleY = 1.0f;
-
-    if (InParameters->Get(NVSDK_NGX_Parameter_MV_Scale_X, &MVScaleX) == NVSDK_NGX_Result_Success &&
-        InParameters->Get(NVSDK_NGX_Parameter_MV_Scale_Y, &MVScaleY) == NVSDK_NGX_Result_Success)
-    {
-        params.motionVectorScale.x = MVScaleX;
-        params.motionVectorScale.y = MVScaleY;
-    }
-    else
-    {
-        LOG_WARN("Can't get motion vector scales!");
-
-        params.motionVectorScale.x = MVScaleX;
-        params.motionVectorScale.y = MVScaleY;
-    }
-
-    if (DepthInverted())
-    {
-        params.cameraFar = Config::Instance()->FsrCameraNear.value_or_default();
-        params.cameraNear = Config::Instance()->FsrCameraFar.value_or_default();
-    }
-    else
-    {
-        params.cameraFar = Config::Instance()->FsrCameraFar.value_or_default();
-        params.cameraNear = Config::Instance()->FsrCameraNear.value_or_default();
-    }
-
-    if (Config::Instance()->FsrVerticalFov.has_value())
-        params.cameraFovAngleVertical = Config::Instance()->FsrVerticalFov.value() * 0.0174532925199433f;
-    else if (Config::Instance()->FsrHorizontalFov.value_or_default() > 0.0f)
-        params.cameraFovAngleVertical = 2.0f * atan((tan(Config::Instance()->FsrHorizontalFov.value() * 0.0174532925199433f) * 0.5f) / (float)TargetHeight() * (float)TargetWidth());
-    else
-        params.cameraFovAngleVertical = 1.0471975511966f;
-
-    if (InParameters->Get(NVSDK_NGX_Parameter_FrameTimeDeltaInMsec, &params.frameTimeDelta) != NVSDK_NGX_Result_Success || params.frameTimeDelta < 1.0f)
-        params.frameTimeDelta = (float)GetDeltaTime();
-
-    if (InParameters->Get(NVSDK_NGX_Parameter_DLSS_Pre_Exposure, &params.preExposure) != NVSDK_NGX_Result_Success)
-        params.preExposure = 1.0f;
-
-    params.viewSpaceToMetersFactor = 1.0f;
-
-    // Version 1.1.1 check
-    if (isVersionOrBetter(Version(), { 1, 1, 1 }) && _velocity != Config::Instance()->FsrVelocity.value_or_default())
-    {
-        _velocity = Config::Instance()->FsrVelocity.value_or_default();
-        ffxConfigureDescUpscaleKeyValue m_upscalerKeyValueConfig{};
-        m_upscalerKeyValueConfig.header.type = FFX_API_CONFIGURE_DESC_TYPE_UPSCALE_KEYVALUE;
-        m_upscalerKeyValueConfig.key = FFX_API_CONFIGURE_UPSCALE_KEY_FVELOCITYFACTOR;
-        m_upscalerKeyValueConfig.ptr = &_velocity;
-        auto result = FfxApiProxy::D3D12_Configure()(&_context, &m_upscalerKeyValueConfig.header);
-
-        if (result != FFX_API_RETURN_OK)
-            LOG_WARN("Velocity configure result: {}", (UINT)result);
-    }
-
-    if (InParameters->Get("FSR.upscaleSize.width", &params.upscaleSize.width) == NVSDK_NGX_Result_Success && Config::Instance()->OutputScalingEnabled.value_or_default())
-        params.upscaleSize.width *= Config::Instance()->OutputScalingMultiplier.value_or_default();
-
-    if (InParameters->Get("FSR.upscaleSize.height", &params.upscaleSize.height) == NVSDK_NGX_Result_Success && Config::Instance()->OutputScalingEnabled.value_or_default())
-        params.upscaleSize.height *= Config::Instance()->OutputScalingMultiplier.value_or_default();
-
-    LOG_DEBUG("Dispatch!!");
-    auto ffxresult = FfxApiProxy::D3D12_Dispatch()(&_context, &params.header);
-
-    if (ffxresult != FFX_API_RETURN_OK)
-    {
-        LOG_ERROR("ffxFsr2ContextDispatch error: {0}", FfxApiProxy::ReturnCodeToString(ffxresult));
-
-        Dx12CommandList->Close();
-        ID3D12CommandList* ppCommandLists[] = { Dx12CommandList };
-        Dx12CommandQueue->ExecuteCommandLists(1, ppCommandLists);
-
-        Dx12CommandAllocator->Reset();
-        Dx12CommandList->Reset(Dx12CommandAllocator, nullptr);
-
-        return false;
-    }
-
-    // apply rcas
-    if (Config::Instance()->RcasEnabled.value_or_default() &&
-        (_sharpness > 0.0f || (Config::Instance()->MotionSharpnessEnabled.value_or_default() && Config::Instance()->MotionSharpness.value_or_default() > 0.0f)) &&
-        RCAS->CanRender())
-    {
-        LOG_DEBUG("Apply CAS");
-        if (params.output.resource != RCAS->Buffer())
-            ResourceBarrier(Dx12CommandList, (ID3D12Resource*)params.output.resource,
-                            D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-
-        RCAS->SetBufferState(Dx12CommandList, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-
-        RcasConstants rcasConstants{};
-
-        rcasConstants.Sharpness = _sharpness;
-        rcasConstants.DisplayWidth = TargetWidth();
-        rcasConstants.DisplayHeight = TargetHeight();
-        InParameters->Get(NVSDK_NGX_Parameter_MV_Scale_X, &rcasConstants.MvScaleX);
-        InParameters->Get(NVSDK_NGX_Parameter_MV_Scale_Y, &rcasConstants.MvScaleY);
-        rcasConstants.DisplaySizeMV = !(GetFeatureFlags() & NVSDK_NGX_DLSS_Feature_Flags_MVLowRes);
-        rcasConstants.RenderHeight = RenderHeight();
-        rcasConstants.RenderWidth = RenderWidth();
-
-        if (useSS)
+        // RCAS
+        if (Config::Instance()->RcasEnabled.value_or_default() &&
+            (_sharpness > 0.0f || (Config::Instance()->MotionSharpnessEnabled.value_or_default() &&
+                                   Config::Instance()->MotionSharpness.value_or_default() > 0.0f)) &&
+            RCAS->IsInit() &&
+            RCAS->CreateBufferResource(Dx12Device, (ID3D12Resource*) params.output.resource,
+                                       D3D12_RESOURCE_STATE_UNORDERED_ACCESS))
         {
-            if (!RCAS->Dispatch(Dx12Device, Dx12CommandList, (ID3D12Resource*)params.output.resource,
-                (ID3D12Resource*)params.motionVectors.resource, rcasConstants, OutputScaler->Buffer()))
-            {
-                Config::Instance()->RcasEnabled.set_volatile_value(false);
+            RCAS->SetBufferState(cmdList, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+            params.output = ffxApiGetResourceDX12(RCAS->Buffer(), FFX_API_RESOURCE_STATE_UNORDERED_ACCESS);
+        }
 
-                Dx12CommandList->Close();
-                ID3D12CommandList* ppCommandLists[] = { Dx12CommandList };
-                Dx12CommandQueue->ExecuteCommandLists(1, ppCommandLists);
+        _hasColor = params.color.resource != nullptr;
+        _hasDepth = params.depth.resource != nullptr;
+        _hasMV = params.motionVectors.resource != nullptr;
+        _hasExposure = params.exposure.resource != nullptr;
+        _hasTM = params.transparencyAndComposition.resource != nullptr;
+        _hasOutput = params.output.resource != nullptr;
 
-                Dx12CommandAllocator->Reset();
-                Dx12CommandList->Reset(Dx12CommandAllocator, nullptr);
+        float MVScaleX = 1.0f;
+        float MVScaleY = 1.0f;
 
-                return true;
-            }
+        if (InParameters->Get(NVSDK_NGX_Parameter_MV_Scale_X, &MVScaleX) == NVSDK_NGX_Result_Success &&
+            InParameters->Get(NVSDK_NGX_Parameter_MV_Scale_Y, &MVScaleY) == NVSDK_NGX_Result_Success)
+        {
+            params.motionVectorScale.x = MVScaleX;
+            params.motionVectorScale.y = MVScaleY;
         }
         else
         {
-            if (!RCAS->Dispatch(Dx12Device, Dx12CommandList, (ID3D12Resource*)params.output.resource, (
-                ID3D12Resource*)params.motionVectors.resource, rcasConstants, dx11Out.Dx12Resource))
+            LOG_WARN("Can't get motion vector scales!");
+
+            params.motionVectorScale.x = MVScaleX;
+            params.motionVectorScale.y = MVScaleY;
+        }
+
+        if (DepthInverted())
+        {
+            params.cameraFar = Config::Instance()->FsrCameraNear.value_or_default();
+            params.cameraNear = Config::Instance()->FsrCameraFar.value_or_default();
+        }
+        else
+        {
+            params.cameraFar = Config::Instance()->FsrCameraFar.value_or_default();
+            params.cameraNear = Config::Instance()->FsrCameraNear.value_or_default();
+        }
+
+        if (Config::Instance()->FsrVerticalFov.has_value())
+            params.cameraFovAngleVertical = Config::Instance()->FsrVerticalFov.value() * 0.0174532925199433f;
+        else if (Config::Instance()->FsrHorizontalFov.value_or_default() > 0.0f)
+            params.cameraFovAngleVertical =
+                2.0f * atan((tan(Config::Instance()->FsrHorizontalFov.value() * 0.0174532925199433f) * 0.5f) /
+                            (float) TargetHeight() * (float) TargetWidth());
+        else
+            params.cameraFovAngleVertical = 1.0471975511966f;
+
+        if (InParameters->Get(NVSDK_NGX_Parameter_FrameTimeDeltaInMsec, &params.frameTimeDelta) !=
+                NVSDK_NGX_Result_Success ||
+            params.frameTimeDelta < 1.0f)
+            params.frameTimeDelta = (float) GetDeltaTime();
+
+        if (InParameters->Get(NVSDK_NGX_Parameter_DLSS_Pre_Exposure, &params.preExposure) != NVSDK_NGX_Result_Success)
+            params.preExposure = 1.0f;
+
+        params.viewSpaceToMetersFactor = 1.0f;
+
+        // Version 3.1.1 check
+        if (isVersionOrBetter(Version(), { 3, 1, 1 }) &&
+            _velocity != Config::Instance()->FsrVelocity.value_or_default())
+        {
+            _velocity = Config::Instance()->FsrVelocity.value_or_default();
+            ffxConfigureDescUpscaleKeyValue m_upscalerKeyValueConfig {};
+            m_upscalerKeyValueConfig.header.type = FFX_API_CONFIGURE_DESC_TYPE_UPSCALE_KEYVALUE;
+            m_upscalerKeyValueConfig.key = FFX_API_CONFIGURE_UPSCALE_KEY_FVELOCITYFACTOR;
+            m_upscalerKeyValueConfig.ptr = &_velocity;
+            auto result = FfxApiProxy::D3D12_Configure()(&_context, &m_upscalerKeyValueConfig.header);
+
+            if (result != FFX_API_RETURN_OK)
+                LOG_WARN("Velocity configure result: {}", (UINT) result);
+        }
+
+        if (isVersionOrBetter(Version(), { 3, 1, 4 }) &&
+            _reactiveScale != Config::Instance()->FsrReactiveScale.value_or_default())
+        {
+            _reactiveScale = Config::Instance()->FsrReactiveScale.value_or_default();
+            ffxConfigureDescUpscaleKeyValue m_upscalerKeyValueConfig {};
+            m_upscalerKeyValueConfig.header.type = FFX_API_CONFIGURE_DESC_TYPE_UPSCALE_KEYVALUE;
+            m_upscalerKeyValueConfig.key = FFX_API_CONFIGURE_UPSCALE_KEY_FREACTIVENESSSCALE;
+            m_upscalerKeyValueConfig.ptr = &_reactiveScale;
+            auto result = FfxApiProxy::D3D12_Configure()(&_context, &m_upscalerKeyValueConfig.header);
+
+            if (result != FFX_API_RETURN_OK)
+                LOG_WARN("Reactive Scale configure result: {}", (UINT) result);
+        }
+
+        if (isVersionOrBetter(Version(), { 3, 1, 4 }) &&
+            _shadingScale != Config::Instance()->FsrShadingScale.value_or_default())
+        {
+            _shadingScale = Config::Instance()->FsrShadingScale.value_or_default();
+            ffxConfigureDescUpscaleKeyValue m_upscalerKeyValueConfig {};
+            m_upscalerKeyValueConfig.header.type = FFX_API_CONFIGURE_DESC_TYPE_UPSCALE_KEYVALUE;
+            m_upscalerKeyValueConfig.key = FFX_API_CONFIGURE_UPSCALE_KEY_FSHADINGCHANGESCALE;
+            m_upscalerKeyValueConfig.ptr = &_shadingScale;
+            auto result = FfxApiProxy::D3D12_Configure()(&_context, &m_upscalerKeyValueConfig.header);
+
+            if (result != FFX_API_RETURN_OK)
+                LOG_WARN("Shading Scale configure result: {}", (UINT) result);
+        }
+
+        if (isVersionOrBetter(Version(), { 3, 1, 4 }) &&
+            _accAddPerFrame != Config::Instance()->FsrAccAddPerFrame.value_or_default())
+        {
+            _accAddPerFrame = Config::Instance()->FsrAccAddPerFrame.value_or_default();
+            ffxConfigureDescUpscaleKeyValue m_upscalerKeyValueConfig {};
+            m_upscalerKeyValueConfig.header.type = FFX_API_CONFIGURE_DESC_TYPE_UPSCALE_KEYVALUE;
+            m_upscalerKeyValueConfig.key = FFX_API_CONFIGURE_UPSCALE_KEY_FACCUMULATIONADDEDPERFRAME;
+            m_upscalerKeyValueConfig.ptr = &_accAddPerFrame;
+            auto result = FfxApiProxy::D3D12_Configure()(&_context, &m_upscalerKeyValueConfig.header);
+
+            if (result != FFX_API_RETURN_OK)
+                LOG_WARN("Acc. Add Per Frame configure result: {}", (UINT) result);
+        }
+
+        if (isVersionOrBetter(Version(), { 3, 1, 4 }) &&
+            _minDisOccAcc != Config::Instance()->FsrMinDisOccAcc.value_or_default())
+        {
+            _minDisOccAcc = Config::Instance()->FsrMinDisOccAcc.value_or_default();
+            ffxConfigureDescUpscaleKeyValue m_upscalerKeyValueConfig {};
+            m_upscalerKeyValueConfig.header.type = FFX_API_CONFIGURE_DESC_TYPE_UPSCALE_KEYVALUE;
+            m_upscalerKeyValueConfig.key = FFX_API_CONFIGURE_UPSCALE_KEY_FMINDISOCCLUSIONACCUMULATION;
+            m_upscalerKeyValueConfig.ptr = &_minDisOccAcc;
+            auto result = FfxApiProxy::D3D12_Configure()(&_context, &m_upscalerKeyValueConfig.header);
+
+            if (result != FFX_API_RETURN_OK)
+                LOG_WARN("Minimum Disocclusion Acc. configure result: {}", (UINT) result);
+        }
+
+        if (InParameters->Get("FSR.upscaleSize.width", &params.upscaleSize.width) == NVSDK_NGX_Result_Success &&
+            Config::Instance()->OutputScalingEnabled.value_or_default())
+            params.upscaleSize.width *= Config::Instance()->OutputScalingMultiplier.value_or_default();
+
+        if (InParameters->Get("FSR.upscaleSize.height", &params.upscaleSize.height) == NVSDK_NGX_Result_Success &&
+            Config::Instance()->OutputScalingEnabled.value_or_default())
+            params.upscaleSize.height *= Config::Instance()->OutputScalingMultiplier.value_or_default();
+
+        LOG_DEBUG("Dispatch!!");
+        ffxresult = FfxApiProxy::D3D12_Dispatch()(&_context, &params.header);
+
+        if (ffxresult != FFX_API_RETURN_OK)
+        {
+            LOG_ERROR("ffxFsr2ContextDispatch error: {0}", FfxApiProxy::ReturnCodeToString(ffxresult));
+            break;
+        }
+
+        // apply rcas
+        if (Config::Instance()->RcasEnabled.value_or_default() &&
+            (_sharpness > 0.0f || (Config::Instance()->MotionSharpnessEnabled.value_or_default() &&
+                                   Config::Instance()->MotionSharpness.value_or_default() > 0.0f)) &&
+            RCAS->CanRender())
+        {
+            LOG_DEBUG("Apply CAS");
+            if (params.output.resource != RCAS->Buffer())
+                ResourceBarrier(cmdList, (ID3D12Resource*) params.output.resource,
+                                D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+
+            RCAS->SetBufferState(cmdList, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+
+            RcasConstants rcasConstants {};
+
+            rcasConstants.Sharpness = _sharpness;
+            rcasConstants.DisplayWidth = TargetWidth();
+            rcasConstants.DisplayHeight = TargetHeight();
+            InParameters->Get(NVSDK_NGX_Parameter_MV_Scale_X, &rcasConstants.MvScaleX);
+            InParameters->Get(NVSDK_NGX_Parameter_MV_Scale_Y, &rcasConstants.MvScaleY);
+            rcasConstants.DisplaySizeMV = !(GetFeatureFlags() & NVSDK_NGX_DLSS_Feature_Flags_MVLowRes);
+            rcasConstants.RenderHeight = RenderHeight();
+            rcasConstants.RenderWidth = RenderWidth();
+
+            if (useSS)
             {
-                Config::Instance()->RcasEnabled.set_volatile_value(false);
-
-                Dx12CommandList->Close();
-                ID3D12CommandList* ppCommandLists[] = { Dx12CommandList };
-                Dx12CommandQueue->ExecuteCommandLists(1, ppCommandLists);
-
-                Dx12CommandAllocator->Reset();
-                Dx12CommandList->Reset(Dx12CommandAllocator, nullptr);
-
-                return true;
-            }
-        }
-    }
-
-    if (useSS)
-    {
-        LOG_DEBUG("downscaling output...");
-        OutputScaler->SetBufferState(Dx12CommandList, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-
-        if (!OutputScaler->Dispatch(Dx12Device, Dx12CommandList, OutputScaler->Buffer(), dx11Out.Dx12Resource))
-        {
-            Config::Instance()->OutputScalingEnabled.set_volatile_value(false);
-            State::Instance().changeBackend[Handle()->Id] = true;
-
-            Dx12CommandList->Close();
-            ID3D12CommandList* ppCommandLists[] = { Dx12CommandList };
-            Dx12CommandQueue->ExecuteCommandLists(1, ppCommandLists);
-
-            Dx12CommandAllocator->Reset();
-            Dx12CommandList->Reset(Dx12CommandAllocator, nullptr);
-
-            return true;
-        }
-    }
-
-    if (!Config::Instance()->SyncAfterDx12.value_or_default())
-    {
-        if (!CopyBackOutput())
-        {
-            LOG_ERROR("Can't copy output texture back!");
-
-            Dx12CommandList->Close();
-            ID3D12CommandList* ppCommandLists[] = { Dx12CommandList };
-            Dx12CommandQueue->ExecuteCommandLists(1, ppCommandLists);
-
-            Dx12CommandAllocator->Reset();
-            Dx12CommandList->Reset(Dx12CommandAllocator, nullptr);
-
-            return false;
-        }
-
-        // imgui
-        if (!Config::Instance()->OverlayMenu.value_or_default() && _frameCount > 30)
-        {
-            if (Imgui != nullptr && Imgui.get() != nullptr)
-            {
-                LOG_DEBUG("Apply Imgui");
-
-                if (Imgui->IsHandleDifferent())
+                if (!RCAS->Dispatch(Dx12Device, cmdList, (ID3D12Resource*) params.output.resource,
+                                    (ID3D12Resource*) params.motionVectors.resource, rcasConstants,
+                                    OutputScaler->Buffer()))
                 {
-                    LOG_DEBUG("Imgui handle different, reset()!");
-                    std::this_thread::sleep_for(std::chrono::milliseconds(250));
-                    Imgui.reset();
+                    Config::Instance()->RcasEnabled.set_volatile_value(false);
+                    break;
                 }
-                else
-                    Imgui->Render(InDeviceContext, paramOutput[_frameCount % 2]);
             }
             else
             {
-                if (Imgui == nullptr || Imgui.get() == nullptr)
-                    Imgui = std::make_unique<Menu_Dx11>(GetForegroundWindow(), Device);
+                if (!RCAS->Dispatch(Dx12Device, cmdList, (ID3D12Resource*) params.output.resource,
+                                    (ID3D12Resource*) params.motionVectors.resource, rcasConstants,
+                                    dx11Out.Dx12Resource))
+                {
+                    Config::Instance()->RcasEnabled.set_volatile_value(false);
+                    break;
+                }
             }
         }
-    }
 
-    // Execute dx12 commands to process fsr
-    Dx12CommandList->Close();
-    ID3D12CommandList* ppCommandLists[] = { Dx12CommandList };
+        if (useSS)
+        {
+            LOG_DEBUG("downscaling output...");
+            OutputScaler->SetBufferState(cmdList, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+
+            if (!OutputScaler->Dispatch(Dx12Device, cmdList, OutputScaler->Buffer(), dx11Out.Dx12Resource))
+            {
+                Config::Instance()->OutputScalingEnabled.set_volatile_value(false);
+                State::Instance().changeBackend[Handle()->Id] = true;
+
+                break;
+            }
+        }
+
+    } while (false);
+
+    cmdList->Close();
+    ID3D12CommandList* ppCommandLists[] = { cmdList };
     Dx12CommandQueue->ExecuteCommandLists(1, ppCommandLists);
+    Dx12CommandQueue->Signal(dx12FenceTextureCopy, _fenceValue);
 
-    if (Config::Instance()->SyncAfterDx12.value_or_default())
+    auto evalResult = false;
+
+    do
     {
+        if (ffxresult != FFX_API_RETURN_OK)
+            break;
+
         if (!CopyBackOutput())
         {
             LOG_ERROR("Can't copy output texture back!");
-
-            Dx12CommandList->Close();
-            ID3D12CommandList* ppCommandLists[] = { Dx12CommandList };
-            Dx12CommandQueue->ExecuteCommandLists(1, ppCommandLists);
-
-            Dx12CommandAllocator->Reset();
-            Dx12CommandList->Reset(Dx12CommandAllocator, nullptr);
-
-            return false;
+            break;
         }
 
-        // imgui
-        if (!Config::Instance()->OverlayMenu.value_or_default() && _frameCount > 30)
-        {
-            if (Imgui != nullptr && Imgui.get() != nullptr)
-            {
-                LOG_DEBUG("Apply Imgui");
+        // imgui - legacy menu disabled for now
+        // if (!Config::Instance()->OverlayMenu.value_or_default() && _frameCount > 30)
+        //{
+        //    if (Imgui != nullptr && Imgui.get() != nullptr)
+        //    {
+        //        LOG_DEBUG("Apply Imgui");
 
-                if (Imgui->IsHandleDifferent())
-                {
-                    LOG_DEBUG("Imgui handle different, reset()!");
-                    std::this_thread::sleep_for(std::chrono::milliseconds(250));
-                    Imgui.reset();
-                }
-                else
-                    Imgui->Render(InDeviceContext, paramOutput[_frameCount % 2]);
-            }
-            else
-            {
-                if (Imgui == nullptr || Imgui.get() == nullptr)
-                    Imgui = std::make_unique<Menu_Dx11>(GetForegroundWindow(), Device);
-            }
-        }
-    }
+        //        if (Imgui->IsHandleDifferent())
+        //        {
+        //            LOG_DEBUG("Imgui handle different, reset()!");
+        //            std::this_thread::sleep_for(std::chrono::milliseconds(250));
+        //            Imgui.reset();
+        //        }
+        //        else
+        //            Imgui->Render(InDeviceContext, paramOutput[_frameCount % 2]);
+        //    }
+        //    else
+        //    {
+        //        if (Imgui == nullptr || Imgui.get() == nullptr)
+        //            Imgui = std::make_unique<Menu_Dx11>(GetForegroundWindow(), Device);
+        //    }
+        //}
+
+        evalResult = true;
+
+    } while (false);
 
     _frameCount++;
+    Dx12CommandQueue->Signal(Dx12Fence, _frameCount);
 
-    Dx12CommandAllocator->Reset();
-    Dx12CommandList->Reset(Dx12CommandAllocator, nullptr);
-
-    return true;
+    return evalResult;
 }
 
 bool FSR31FeatureDx11on12::InitFSR3(const NVSDK_NGX_Parameter* InParameters)
@@ -536,7 +536,7 @@ bool FSR31FeatureDx11on12::InitFSR3(const NVSDK_NGX_Parameter* InParameters)
 
     State::Instance().skipSpoofing = true;
 
-    ffxQueryDescGetVersions versionQuery{};
+    ffxQueryDescGetVersions versionQuery {};
     versionQuery.header.type = FFX_API_QUERY_DESC_TYPE_GET_VERSIONS;
     versionQuery.createDescType = FFX_API_CREATE_CONTEXT_DESC_TYPE_UPSCALE;
     versionQuery.device = Dx12Device; // only for DirectX 12 applications
@@ -551,7 +551,6 @@ bool FSR31FeatureDx11on12::InitFSR3(const NVSDK_NGX_Parameter* InParameters)
     versionQuery.versionNames = State::Instance().fsr3xVersionNames.data();
     // fill version ids and names arrays.
     FfxApiProxy::D3D12_Query()(nullptr, &versionQuery.header);
-
 
     _contextDesc.flags = 0;
     _contextDesc.header.type = FFX_API_CREATE_CONTEXT_DESC_TYPE_UPSCALE;
@@ -577,7 +576,8 @@ bool FSR31FeatureDx11on12::InitFSR3(const NVSDK_NGX_Parameter* InParameters)
     if (!LowResMV())
         _contextDesc.flags |= FFX_UPSCALE_ENABLE_DISPLAY_RESOLUTION_MOTION_VECTORS;
 
-    if (Config::Instance()->FsrNonLinearPQ.value_or_default() || Config::Instance()->FsrNonLinearSRGB.value_or_default())
+    if (Config::Instance()->FsrNonLinearPQ.value_or_default() ||
+        Config::Instance()->FsrNonLinearSRGB.value_or_default())
     {
         _contextDesc.flags |= FFX_UPSCALE_ENABLE_NON_LINEAR_COLORSPACE;
         LOG_INFO("contextDesc.initFlags (NonLinearColorSpace) {0:b}", _contextDesc.flags);
@@ -607,7 +607,7 @@ bool FSR31FeatureDx11on12::InitFSR3(const NVSDK_NGX_Parameter* InParameters)
         _targetHeight = DisplayHeight();
     }
 
-    // extended limits changes how resolution 
+    // extended limits changes how resolution
     if (Config::Instance()->ExtendedLimits.value_or_default() && RenderWidth() > DisplayWidth())
     {
         _contextDesc.maxRenderSize.width = RenderWidth();
@@ -624,7 +624,6 @@ bool FSR31FeatureDx11on12::InitFSR3(const NVSDK_NGX_Parameter* InParameters)
             // update target res
             _targetWidth = _contextDesc.maxRenderSize.width;
             _targetHeight = _contextDesc.maxRenderSize.height;
-
         }
         else
         {
@@ -645,7 +644,8 @@ bool FSR31FeatureDx11on12::InitFSR3(const NVSDK_NGX_Parameter* InParameters)
     backendDesc.device = Dx12Device;
     _contextDesc.header.pNext = &backendDesc.header;
 
-    if (Config::Instance()->Fsr3xIndex.value_or_default() < 0 || Config::Instance()->Fsr3xIndex.value_or_default() >= State::Instance().fsr3xVersionIds.size())
+    if (Config::Instance()->Fsr3xIndex.value_or_default() < 0 ||
+        Config::Instance()->Fsr3xIndex.value_or_default() >= State::Instance().fsr3xVersionIds.size())
         Config::Instance()->Fsr3xIndex.set_volatile_value(0);
 
     ffxOverrideVersion ov = { 0 };

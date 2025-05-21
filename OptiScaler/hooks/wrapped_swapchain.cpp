@@ -11,11 +11,14 @@
 
 static int scCount = 0;
 
-WrappedIDXGISwapChain4::WrappedIDXGISwapChain4(IDXGISwapChain* real, IUnknown* pDevice, HWND hWnd, PFN_SC_Present renderTrig, PFN_SC_Clean clearTrig, PFN_SC_Release releaseTrig, bool isUWP)
-    : m_pReal(real), Device(pDevice), Handle(hWnd), RenderTrig(renderTrig), ClearTrig(clearTrig), ReleaseTrig(releaseTrig), m_iRefcount(1), UWP(isUWP)
+WrappedIDXGISwapChain4::WrappedIDXGISwapChain4(IDXGISwapChain* real, IUnknown* pDevice, HWND hWnd,
+                                               PFN_SC_Present renderTrig, PFN_SC_Clean clearTrig,
+                                               PFN_SC_Release releaseTrig, bool isUWP)
+    : m_pReal(real), Device(pDevice), Handle(hWnd), RenderTrig(renderTrig), ClearTrig(clearTrig),
+      ReleaseTrig(releaseTrig), m_iRefcount(1), UWP(isUWP)
 {
     id = ++scCount;
-    LOG_INFO("{0} created, real: {1:X}", id, (UINT64)real);
+    LOG_INFO("{0} created, real: {1:X}", id, (UINT64) real);
     m_pReal->QueryInterface(IID_PPV_ARGS(&m_pReal1));
     m_pReal->QueryInterface(IID_PPV_ARGS(&m_pReal2));
     m_pReal->QueryInterface(IID_PPV_ARGS(&m_pReal3));
@@ -31,7 +34,7 @@ HRESULT STDMETHODCALLTYPE WrappedIDXGISwapChain4::QueryInterface(REFIID riid, vo
     if (riid == __uuidof(IDXGISwapChain))
     {
         AddRef();
-        *ppvObject = (IDXGISwapChain*)this;
+        *ppvObject = (IDXGISwapChain*) this;
         return S_OK;
     }
     else if (riid == __uuidof(IDXGISwapChain1))
@@ -39,7 +42,7 @@ HRESULT STDMETHODCALLTYPE WrappedIDXGISwapChain4::QueryInterface(REFIID riid, vo
         if (m_pReal1)
         {
             AddRef();
-            *ppvObject = (IDXGISwapChain1*)this;
+            *ppvObject = (IDXGISwapChain1*) this;
             return S_OK;
         }
         else
@@ -52,7 +55,7 @@ HRESULT STDMETHODCALLTYPE WrappedIDXGISwapChain4::QueryInterface(REFIID riid, vo
         if (m_pReal2)
         {
             AddRef();
-            *ppvObject = (IDXGISwapChain2*)this;
+            *ppvObject = (IDXGISwapChain2*) this;
             return S_OK;
         }
         else
@@ -65,7 +68,7 @@ HRESULT STDMETHODCALLTYPE WrappedIDXGISwapChain4::QueryInterface(REFIID riid, vo
         if (m_pReal3)
         {
             AddRef();
-            *ppvObject = (IDXGISwapChain3*)this;
+            *ppvObject = (IDXGISwapChain3*) this;
             return S_OK;
         }
         else
@@ -78,7 +81,7 @@ HRESULT STDMETHODCALLTYPE WrappedIDXGISwapChain4::QueryInterface(REFIID riid, vo
         if (m_pReal4)
         {
             AddRef();
-            *ppvObject = (IDXGISwapChain4*)this;
+            *ppvObject = (IDXGISwapChain4*) this;
             return S_OK;
         }
         else
@@ -95,19 +98,19 @@ HRESULT STDMETHODCALLTYPE WrappedIDXGISwapChain4::QueryInterface(REFIID riid, vo
     else if (riid == __uuidof(IUnknown))
     {
         AddRef();
-        *ppvObject = (IUnknown*)this;
+        *ppvObject = (IUnknown*) this;
         return S_OK;
     }
     else if (riid == __uuidof(IDXGIObject))
     {
         AddRef();
-        *ppvObject = (IDXGIObject*)this;
+        *ppvObject = (IDXGIObject*) this;
         return S_OK;
     }
     else if (riid == __uuidof(IDXGIDeviceSubObject))
     {
         AddRef();
-        *ppvObject = (IDXGIDeviceSubObject*)this;
+        *ppvObject = (IDXGIDeviceSubObject*) this;
         return S_OK;
     }
 
@@ -150,7 +153,6 @@ ULONG STDMETHODCALLTYPE WrappedIDXGISwapChain4::Release()
 
         if (m_pReal != nullptr)
             relCount = m_pReal->Release();
-
 
         LOG_INFO("{} released", id);
 
@@ -219,7 +221,7 @@ HRESULT STDMETHODCALLTYPE WrappedIDXGISwapChain4::GetBuffer(UINT Buffer, REFIID 
 
 HRESULT STDMETHODCALLTYPE WrappedIDXGISwapChain4::SetFullscreenState(BOOL Fullscreen, IDXGIOutput* pTarget)
 {
-    LOG_DEBUG("Fullscreen: {}, pTarget: {:X}", Fullscreen, (size_t)pTarget);
+    LOG_DEBUG("Fullscreen: {}, pTarget: {:X}", Fullscreen, (size_t) pTarget);
     HRESULT result = S_OK;
 
     bool ffxLock = false;
@@ -234,12 +236,12 @@ HRESULT STDMETHODCALLTYPE WrappedIDXGISwapChain4::SetFullscreenState(BOOL Fullsc
         if (Config::Instance()->FGUseMutexForSwaphain.value_or_default())
         {
 
-            if (FrameGen_Dx12::ffxMutex.getOwner() != 3)
+            if (State::Instance().currentFG != nullptr && State::Instance().currentFG->Mutex.getOwner() != 3)
             {
-                LOG_TRACE("Waiting ffxMutex 3, current: {}", FrameGen_Dx12::ffxMutex.getOwner());
-                FrameGen_Dx12::ffxMutex.lock(3);
+                LOG_TRACE("Waiting ffxMutex 3, current: {}", State::Instance().currentFG->Mutex.getOwner());
+                State::Instance().currentFG->Mutex.lock(3);
                 ffxLock = true;
-                LOG_TRACE("Accuired ffxMutex: {}", FrameGen_Dx12::ffxMutex.getOwner());
+                LOG_TRACE("Accuired ffxMutex: {}", State::Instance().currentFG->Mutex.getOwner());
             }
             else
             {
@@ -250,10 +252,11 @@ HRESULT STDMETHODCALLTYPE WrappedIDXGISwapChain4::SetFullscreenState(BOOL Fullsc
         result = m_pReal->SetFullscreenState(Fullscreen, pTarget);
 
         if (result != S_OK)
-            LOG_ERROR("result: {:X}", (UINT)result);
+            LOG_ERROR("result: {:X}", (UINT) result);
         else
             LOG_DEBUG("result: {:X}", result);
 
+        /*
         if (Config::Instance()->FGEnabled.value_or_default())
         {
             State::Instance().FGresetCapturedResources = true;
@@ -263,6 +266,7 @@ HRESULT STDMETHODCALLTYPE WrappedIDXGISwapChain4::SetFullscreenState(BOOL Fullsc
                 State::Instance().FGchanged = true;
         }
 
+        /*
         if (ClearTrig != nullptr)
             ClearTrig(true, Handle);
 
@@ -288,12 +292,13 @@ HRESULT STDMETHODCALLTYPE WrappedIDXGISwapChain4::SetFullscreenState(BOOL Fullsc
                 buffer->Release();
             }
         }
+        */
     }
 
     if (Config::Instance()->FGUseMutexForSwaphain.value_or_default() && ffxLock)
     {
-        LOG_TRACE("Releasing ffxMutex: {}", FrameGen_Dx12::ffxMutex.getOwner());
-        FrameGen_Dx12::ffxMutex.unlockThis(3);
+        LOG_TRACE("Releasing ffxMutex: {}", State::Instance().currentFG->Mutex.getOwner());
+        State::Instance().currentFG->Mutex.unlockThis(3);
     }
 
     return result;
@@ -309,7 +314,8 @@ HRESULT STDMETHODCALLTYPE WrappedIDXGISwapChain4::GetDesc(DXGI_SWAP_CHAIN_DESC* 
     return m_pReal->GetDesc(pDesc);
 }
 
-HRESULT STDMETHODCALLTYPE WrappedIDXGISwapChain4::ResizeBuffers(UINT BufferCount, UINT Width, UINT Height, DXGI_FORMAT NewFormat, UINT SwapChainFlags)
+HRESULT STDMETHODCALLTYPE WrappedIDXGISwapChain4::ResizeBuffers(UINT BufferCount, UINT Width, UINT Height,
+                                                                DXGI_FORMAT NewFormat, UINT SwapChainFlags)
 {
     LOG_DEBUG("");
 
@@ -320,15 +326,15 @@ HRESULT STDMETHODCALLTYPE WrappedIDXGISwapChain4::ResizeBuffers(UINT BufferCount
         OwnedLockGuard lock(_localMutex, 1);
 #endif
 
-    if (Config::Instance()->FGUseMutexForSwaphain.value_or_default())
+    if (State::Instance().currentFG != nullptr && Config::Instance()->FGUseMutexForSwaphain.value_or_default())
     {
-        LOG_TRACE("Waiting ffxMutex 3, current: {}", FrameGen_Dx12::ffxMutex.getOwner());
-        FrameGen_Dx12::ffxMutex.lock(3);
-        LOG_TRACE("Accuired ffxMutex: {}", FrameGen_Dx12::ffxMutex.getOwner());
+        LOG_TRACE("Waiting ffxMutex 3, current: {}", State::Instance().currentFG->Mutex.getOwner());
+        State::Instance().currentFG->Mutex.lock(3);
+        LOG_TRACE("Accuired ffxMutex: {}", State::Instance().currentFG->Mutex.getOwner());
     }
 
     HRESULT result;
-    DXGI_SWAP_CHAIN_DESC desc{};
+    DXGI_SWAP_CHAIN_DESC desc {};
     m_pReal->GetDesc(&desc);
 
     if (Config::Instance()->FGEnabled.value_or_default())
@@ -345,7 +351,8 @@ HRESULT STDMETHODCALLTYPE WrappedIDXGISwapChain4::ResizeBuffers(UINT BufferCount
 
     State::Instance().SCchanged = true;
 
-    LOG_DEBUG("BufferCount: {0}, Width: {1}, Height: {2}, NewFormat: {3}, SwapChainFlags: {4:X}", BufferCount, Width, Height, (UINT)NewFormat, SwapChainFlags);
+    LOG_DEBUG("BufferCount: {0}, Width: {1}, Height: {2}, NewFormat: {3}, SwapChainFlags: {4:X}", BufferCount, Width,
+              Height, (UINT) NewFormat, SwapChainFlags);
 
     result = m_pReal->ResizeBuffers(BufferCount, Width, Height, NewFormat, SwapChainFlags);
     if (result == S_OK && State::Instance().currentFeature == nullptr)
@@ -382,7 +389,7 @@ HRESULT STDMETHODCALLTYPE WrappedIDXGISwapChain4::ResizeBuffers(UINT BufferCount
 
             if (result != S_OK)
             {
-                LOG_ERROR("CheckColorSpaceSupport error: {:X}", (UINT)result);
+                LOG_ERROR("CheckColorSpaceSupport error: {:X}", (UINT) result);
                 break;
             }
 
@@ -392,7 +399,7 @@ HRESULT STDMETHODCALLTYPE WrappedIDXGISwapChain4::ResizeBuffers(UINT BufferCount
 
                 if (result != S_OK)
                 {
-                    LOG_ERROR("SetColorSpace1 error: {:X}", (UINT)result);
+                    LOG_ERROR("SetColorSpace1 error: {:X}", (UINT) result);
                     break;
                 }
             }
@@ -406,7 +413,7 @@ HRESULT STDMETHODCALLTYPE WrappedIDXGISwapChain4::ResizeBuffers(UINT BufferCount
     UINT bc = BufferCount;
     if (bc == 0 && m_pReal1 != nullptr)
     {
-        DXGI_SWAP_CHAIN_DESC1 desc{};
+        DXGI_SWAP_CHAIN_DESC1 desc {};
 
         if (m_pReal1->GetDesc1(&desc) == S_OK)
             bc = desc.BufferCount;
@@ -423,12 +430,12 @@ HRESULT STDMETHODCALLTYPE WrappedIDXGISwapChain4::ResizeBuffers(UINT BufferCount
         }
     }
 
-    LOG_DEBUG("result: {0:X}", (UINT)result);
+    LOG_DEBUG("result: {0:X}", (UINT) result);
 
-    if (Config::Instance()->FGUseMutexForSwaphain.value_or_default())
+    if (State::Instance().currentFG != nullptr && Config::Instance()->FGUseMutexForSwaphain.value_or_default())
     {
-        LOG_TRACE("Releasing ffxMutex: {}", FrameGen_Dx12::ffxMutex.getOwner());
-        FrameGen_Dx12::ffxMutex.unlockThis(3);
+        LOG_TRACE("Releasing ffxMutex: {}", State::Instance().currentFG->Mutex.getOwner());
+        State::Instance().currentFG->Mutex.unlockThis(3);
     }
 
     return result;
@@ -465,17 +472,15 @@ HRESULT STDMETHODCALLTYPE WrappedIDXGISwapChain4::GetFullscreenDesc(DXGI_SWAP_CH
     return m_pReal1->GetFullscreenDesc(pDesc);
 }
 
-HRESULT STDMETHODCALLTYPE WrappedIDXGISwapChain4::GetHwnd(HWND* pHwnd)
-{
-    return m_pReal1->GetHwnd(pHwnd);
-}
+HRESULT STDMETHODCALLTYPE WrappedIDXGISwapChain4::GetHwnd(HWND* pHwnd) { return m_pReal1->GetHwnd(pHwnd); }
 
 HRESULT STDMETHODCALLTYPE WrappedIDXGISwapChain4::GetCoreWindow(REFIID refiid, void** ppUnk)
 {
     return m_pReal1->GetCoreWindow(refiid, ppUnk);
 }
 
-HRESULT STDMETHODCALLTYPE WrappedIDXGISwapChain4::Present1(UINT SyncInterval, UINT Flags, const DXGI_PRESENT_PARAMETERS* pPresentParameters)
+HRESULT STDMETHODCALLTYPE WrappedIDXGISwapChain4::Present1(UINT SyncInterval, UINT Flags,
+                                                           const DXGI_PRESENT_PARAMETERS* pPresentParameters)
 {
     if (m_pReal1 == nullptr)
         return DXGI_ERROR_DEVICE_REMOVED;
@@ -565,21 +570,26 @@ UINT STDMETHODCALLTYPE WrappedIDXGISwapChain4::GetCurrentBackBufferIndex(void)
     return m_pReal3->GetCurrentBackBufferIndex();
 }
 
-HRESULT STDMETHODCALLTYPE WrappedIDXGISwapChain4::CheckColorSpaceSupport(DXGI_COLOR_SPACE_TYPE ColorSpace, UINT* pColorSpaceSupport)
+HRESULT STDMETHODCALLTYPE WrappedIDXGISwapChain4::CheckColorSpaceSupport(DXGI_COLOR_SPACE_TYPE ColorSpace,
+                                                                         UINT* pColorSpaceSupport)
 {
     return m_pReal3->CheckColorSpaceSupport(ColorSpace, pColorSpaceSupport);
 }
 
 HRESULT STDMETHODCALLTYPE WrappedIDXGISwapChain4::SetColorSpace1(DXGI_COLOR_SPACE_TYPE ColorSpace)
 {
-    State::Instance().isHdrActive = ColorSpace == DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020 || ColorSpace == DXGI_COLOR_SPACE_YCBCR_FULL_GHLG_TOPLEFT_P2020 ||
-        ColorSpace == DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P2020 || ColorSpace == DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709;
+    State::Instance().isHdrActive = ColorSpace == DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020 ||
+                                    ColorSpace == DXGI_COLOR_SPACE_YCBCR_FULL_GHLG_TOPLEFT_P2020 ||
+                                    ColorSpace == DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P2020 ||
+                                    ColorSpace == DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709;
 
     return m_pReal3->SetColorSpace1(ColorSpace);
 }
 
-HRESULT STDMETHODCALLTYPE WrappedIDXGISwapChain4::ResizeBuffers1(UINT BufferCount, UINT Width, UINT Height, DXGI_FORMAT Format, UINT SwapChainFlags,
-                                                                 const UINT* pCreationNodeMask, IUnknown* const* ppPresentQueue)
+HRESULT STDMETHODCALLTYPE WrappedIDXGISwapChain4::ResizeBuffers1(UINT BufferCount, UINT Width, UINT Height,
+                                                                 DXGI_FORMAT Format, UINT SwapChainFlags,
+                                                                 const UINT* pCreationNodeMask,
+                                                                 IUnknown* const* ppPresentQueue)
 {
     LOG_DEBUG("");
 
@@ -592,13 +602,13 @@ HRESULT STDMETHODCALLTYPE WrappedIDXGISwapChain4::ResizeBuffers1(UINT BufferCoun
 
     if (Config::Instance()->FGUseMutexForSwaphain.value_or_default())
     {
-        LOG_TRACE("Waiting ffxMutex 3, current: {}", FrameGen_Dx12::ffxMutex.getOwner());
-        FrameGen_Dx12::ffxMutex.lock(3);
-        LOG_TRACE("Accuired ffxMutex: {}", FrameGen_Dx12::ffxMutex.getOwner());
+        LOG_TRACE("Waiting ffxMutex 3, current: {}", State::Instance().currentFG->Mutex.getOwner());
+        State::Instance().currentFG->Mutex.lock(3);
+        LOG_TRACE("Accuired ffxMutex: {}", State::Instance().currentFG->Mutex.getOwner());
     }
 
     HRESULT result;
-    DXGI_SWAP_CHAIN_DESC desc{};
+    DXGI_SWAP_CHAIN_DESC desc {};
     m_pReal->GetDesc(&desc);
 
     if (Config::Instance()->FGEnabled.value_or_default())
@@ -615,9 +625,12 @@ HRESULT STDMETHODCALLTYPE WrappedIDXGISwapChain4::ResizeBuffers1(UINT BufferCoun
 
     State::Instance().SCchanged = true;
 
-    LOG_DEBUG("BufferCount: {0}, Width: {1}, Height: {2}, NewFormat: {3}, SwapChainFlags: {4:X}, pCreationNodeMask: {5}", BufferCount, Width, Height, (UINT)Format, SwapChainFlags, *pCreationNodeMask);
+    LOG_DEBUG(
+        "BufferCount: {0}, Width: {1}, Height: {2}, NewFormat: {3}, SwapChainFlags: {4:X}, pCreationNodeMask: {5}",
+        BufferCount, Width, Height, (UINT) Format, SwapChainFlags, *pCreationNodeMask);
 
-    result = m_pReal3->ResizeBuffers1(BufferCount, Width, Height, Format, SwapChainFlags, pCreationNodeMask, ppPresentQueue);
+    result =
+        m_pReal3->ResizeBuffers1(BufferCount, Width, Height, Format, SwapChainFlags, pCreationNodeMask, ppPresentQueue);
     if (result == S_OK && State::Instance().currentFeature == nullptr)
     {
         State::Instance().screenWidth = Width;
@@ -649,7 +662,7 @@ HRESULT STDMETHODCALLTYPE WrappedIDXGISwapChain4::ResizeBuffers1(UINT BufferCoun
 
             if (result != S_OK)
             {
-                LOG_ERROR("CheckColorSpaceSupport error: {:X}", (UINT)result);
+                LOG_ERROR("CheckColorSpaceSupport error: {:X}", (UINT) result);
                 break;
             }
 
@@ -659,7 +672,7 @@ HRESULT STDMETHODCALLTYPE WrappedIDXGISwapChain4::ResizeBuffers1(UINT BufferCoun
 
                 if (result != S_OK)
                 {
-                    LOG_ERROR("SetColorSpace1 error: {:X}", (UINT)result);
+                    LOG_ERROR("SetColorSpace1 error: {:X}", (UINT) result);
                     break;
                 }
             }
@@ -673,7 +686,7 @@ HRESULT STDMETHODCALLTYPE WrappedIDXGISwapChain4::ResizeBuffers1(UINT BufferCoun
     UINT bc = BufferCount;
     if (bc == 0 && m_pReal1 != nullptr)
     {
-        DXGI_SWAP_CHAIN_DESC1 desc{};
+        DXGI_SWAP_CHAIN_DESC1 desc {};
 
         if (m_pReal1->GetDesc1(&desc) == S_OK)
             bc = desc.BufferCount;
@@ -690,19 +703,20 @@ HRESULT STDMETHODCALLTYPE WrappedIDXGISwapChain4::ResizeBuffers1(UINT BufferCoun
         }
     }
 
-    LOG_DEBUG("result: {0:X}", (UINT)result);
+    LOG_DEBUG("result: {0:X}", (UINT) result);
 
     if (Config::Instance()->FGUseMutexForSwaphain.value_or_default())
     {
-        LOG_TRACE("Releasing ffxMutex: {}", FrameGen_Dx12::ffxMutex.getOwner());
-        FrameGen_Dx12::ffxMutex.unlockThis(3);
+        LOG_TRACE("Releasing ffxMutex: {}", State::Instance().currentFG->Mutex.getOwner());
+        State::Instance().currentFG->Mutex.unlockThis(3);
     }
 
     return result;
 }
 
 //
-HRESULT STDMETHODCALLTYPE WrappedIDXGISwapChain4::SetHDRMetaData(DXGI_HDR_METADATA_TYPE Type, UINT Size, void* pMetaData)
+HRESULT STDMETHODCALLTYPE WrappedIDXGISwapChain4::SetHDRMetaData(DXGI_HDR_METADATA_TYPE Type, UINT Size,
+                                                                 void* pMetaData)
 {
     return m_pReal4->SetHDRMetaData(Type, Size, pMetaData);
 }

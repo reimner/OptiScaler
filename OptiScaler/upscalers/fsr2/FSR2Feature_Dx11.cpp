@@ -4,16 +4,21 @@
 
 #include "FSR2Feature_Dx11.h"
 
-#define ASSIGN_DESC(dest, src) dest.Width = src.Width; dest.Height = src.Height; dest.Format = src.Format; dest.BindFlags = src.BindFlags; 
+#define ASSIGN_DESC(dest, src)                                                                                         \
+    dest.Width = src.Width;                                                                                            \
+    dest.Height = src.Height;                                                                                          \
+    dest.Format = src.Format;                                                                                          \
+    dest.BindFlags = src.BindFlags;
 
-#define SAFE_RELEASE(p)		\
-do {						\
-	if(p && p != nullptr)	\
-	{						\
-		(p)->Release();		\
-		(p) = nullptr;		\
-	}						\
-} while((void)0, 0);	
+#define SAFE_RELEASE(p)                                                                                                \
+    do                                                                                                                 \
+    {                                                                                                                  \
+        if (p && p != nullptr)                                                                                         \
+        {                                                                                                              \
+            (p)->Release();                                                                                            \
+            (p) = nullptr;                                                                                             \
+        }                                                                                                              \
+    } while ((void) 0, 0);
 
 bool FSR2FeatureDx11::Init(ID3D11Device* InDevice, ID3D11DeviceContext* InContext, NVSDK_NGX_Parameter* InParameters)
 {
@@ -40,10 +45,11 @@ bool FSR2FeatureDx11::Init(ID3D11Device* InDevice, ID3D11DeviceContext* InContex
     return false;
 }
 
-bool FSR2FeatureDx11::CopyTexture(ID3D11Resource* InResource, D3D11_TEXTURE2D_RESOURCE_C* OutTextureRes, UINT bindFlags, bool InCopy)
+bool FSR2FeatureDx11::CopyTexture(ID3D11Resource* InResource, D3D11_TEXTURE2D_RESOURCE_C* OutTextureRes, UINT bindFlags,
+                                  bool InCopy)
 {
     ID3D11Texture2D* originalTexture = nullptr;
-    D3D11_TEXTURE2D_DESC desc{};
+    D3D11_TEXTURE2D_DESC desc {};
 
     auto result = InResource->QueryInterface(IID_PPV_ARGS(&originalTexture));
 
@@ -60,9 +66,9 @@ bool FSR2FeatureDx11::CopyTexture(ID3D11Resource* InResource, D3D11_TEXTURE2D_RE
         return true;
     }
 
-    if (OutTextureRes->usingOriginal || OutTextureRes->Texture == nullptr ||
-        desc.Width != OutTextureRes->Desc.Width || desc.Height != OutTextureRes->Desc.Height ||
-        desc.Format != OutTextureRes->Desc.Format || desc.BindFlags != OutTextureRes->Desc.BindFlags)
+    if (OutTextureRes->usingOriginal || OutTextureRes->Texture == nullptr || desc.Width != OutTextureRes->Desc.Width ||
+        desc.Height != OutTextureRes->Desc.Height || desc.Format != OutTextureRes->Desc.Format ||
+        desc.BindFlags != OutTextureRes->Desc.BindFlags)
     {
         if (OutTextureRes->Texture != nullptr)
         {
@@ -95,8 +101,6 @@ bool FSR2FeatureDx11::CopyTexture(ID3D11Resource* InResource, D3D11_TEXTURE2D_RE
 
 void FSR2FeatureDx11::ReleaseResources()
 {
-    LOG_FUNC();
-
     if (!bufferColor.usingOriginal)
     {
         SAFE_RELEASE(bufferColor.Texture);
@@ -173,7 +177,7 @@ bool FSR2FeatureDx11::InitFSR2(const NVSDK_NGX_Parameter* InParameters)
         _targetHeight = DisplayHeight();
     }
 
-    // extended limits changes how resolution 
+    // extended limits changes how resolution
     if (Config::Instance()->ExtendedLimits.value_or_default() && RenderWidth() > DisplayWidth())
     {
         _contextDesc.maxRenderSize.width = RenderWidth();
@@ -228,7 +232,8 @@ bool FSR2FeatureDx11::InitFSR2(const NVSDK_NGX_Parameter* InParameters)
     return true;
 }
 
-FSR2FeatureDx11::FSR2FeatureDx11(unsigned int InHandleId, NVSDK_NGX_Parameter* InParameters) : IFeature(InHandleId, InParameters), IFeature_Dx11(InHandleId, InParameters), FSR2Feature(InHandleId, InParameters)
+FSR2FeatureDx11::FSR2FeatureDx11(unsigned int InHandleId, NVSDK_NGX_Parameter* InParameters)
+    : IFeature(InHandleId, InParameters), IFeature_Dx11(InHandleId, InParameters), FSR2Feature(InHandleId, InParameters)
 {
 }
 
@@ -272,7 +277,7 @@ bool FSR2FeatureDx11::Evaluate(ID3D11DeviceContext* InContext, NVSDK_NGX_Paramet
         InContext->CSGetUnorderedAccessViews(i, 1, &restoreUAVs[i]);
     }
 
-    FfxFsr2DispatchDescription params{};
+    FfxFsr2DispatchDescription params {};
     params.commandList = InContext;
 
     InParameters->Get(NVSDK_NGX_Parameter_Jitter_Offset_X, &params.jitterOffset.x);
@@ -309,7 +314,7 @@ bool FSR2FeatureDx11::Evaluate(ID3D11DeviceContext* InContext, NVSDK_NGX_Paramet
 
     ID3D11Resource* paramColor;
     if (InParameters->Get(NVSDK_NGX_Parameter_Color, &paramColor) != NVSDK_NGX_Result_Success)
-        InParameters->Get(NVSDK_NGX_Parameter_Color, (void**)&paramColor);
+        InParameters->Get(NVSDK_NGX_Parameter_Color, (void**) &paramColor);
 
     if (paramColor)
     {
@@ -322,9 +327,9 @@ bool FSR2FeatureDx11::Evaluate(ID3D11DeviceContext* InContext, NVSDK_NGX_Paramet
         }
 
         if (bufferColor.Texture != nullptr)
-            params.color = ffxGetResourceDX11(&_context, bufferColor.Texture, (wchar_t*)L"FSR2_Color");
+            params.color = ffxGetResourceDX11(&_context, bufferColor.Texture, (wchar_t*) L"FSR2_Color");
         else
-            params.color = ffxGetResourceDX11(&_context, paramColor, (wchar_t*)L"FSR2_Color");
+            params.color = ffxGetResourceDX11(&_context, paramColor, (wchar_t*) L"FSR2_Color");
     }
     else
     {
@@ -334,12 +339,12 @@ bool FSR2FeatureDx11::Evaluate(ID3D11DeviceContext* InContext, NVSDK_NGX_Paramet
 
     ID3D11Resource* paramVelocity;
     if (InParameters->Get(NVSDK_NGX_Parameter_MotionVectors, &paramVelocity) != NVSDK_NGX_Result_Success)
-        InParameters->Get(NVSDK_NGX_Parameter_MotionVectors, (void**)&paramVelocity);
+        InParameters->Get(NVSDK_NGX_Parameter_MotionVectors, (void**) &paramVelocity);
 
     if (paramVelocity)
     {
         LOG_DEBUG("MotionVectors exist..");
-        params.motionVectors = ffxGetResourceDX11(&_context, paramVelocity, (wchar_t*)L"FSR2_MotionVectors");
+        params.motionVectors = ffxGetResourceDX11(&_context, paramVelocity, (wchar_t*) L"FSR2_MotionVectors");
     }
     else
     {
@@ -351,7 +356,7 @@ bool FSR2FeatureDx11::Evaluate(ID3D11DeviceContext* InContext, NVSDK_NGX_Paramet
 
     ID3D11Resource* paramOutput;
     if (InParameters->Get(NVSDK_NGX_Parameter_Output, &paramOutput) != NVSDK_NGX_Result_Success)
-        InParameters->Get(NVSDK_NGX_Parameter_Output, (void**)&paramOutput);
+        InParameters->Get(NVSDK_NGX_Parameter_Output, (void**) &paramOutput);
 
     if (paramOutput)
     {
@@ -361,19 +366,25 @@ bool FSR2FeatureDx11::Evaluate(ID3D11DeviceContext* InContext, NVSDK_NGX_Paramet
         {
             if (OutputScaler->CreateBufferResource(Device, paramOutput, TargetWidth(), TargetHeight()))
             {
-                params.output = ffxGetResourceDX11(&_context, OutputScaler->Buffer(), (wchar_t*)L"FSR2_Output", FFX_RESOURCE_STATE_UNORDERED_ACCESS);
+                params.output = ffxGetResourceDX11(&_context, OutputScaler->Buffer(), (wchar_t*) L"FSR2_Output",
+                                                   FFX_RESOURCE_STATE_UNORDERED_ACCESS);
             }
             else
-                params.output = ffxGetResourceDX11(&_context, paramOutput, (wchar_t*)L"FSR2_Output", FFX_RESOURCE_STATE_UNORDERED_ACCESS);
+                params.output = ffxGetResourceDX11(&_context, paramOutput, (wchar_t*) L"FSR2_Output",
+                                                   FFX_RESOURCE_STATE_UNORDERED_ACCESS);
         }
         else
-            params.output = ffxGetResourceDX11(&_context, paramOutput, (wchar_t*)L"FSR2_Output", FFX_RESOURCE_STATE_UNORDERED_ACCESS);
+            params.output = ffxGetResourceDX11(&_context, paramOutput, (wchar_t*) L"FSR2_Output",
+                                               FFX_RESOURCE_STATE_UNORDERED_ACCESS);
 
         if (Config::Instance()->RcasEnabled.value_or_default() &&
-            (_sharpness > 0.0f || (Config::Instance()->MotionSharpnessEnabled.value_or_default() && Config::Instance()->MotionSharpness.value_or_default() > 0.0f)) &&
-            RCAS != nullptr && RCAS.get() != nullptr && RCAS->IsInit() && RCAS->CreateBufferResource(Device, (ID3D11Texture2D*)params.output.resource))
+            (_sharpness > 0.0f || (Config::Instance()->MotionSharpnessEnabled.value_or_default() &&
+                                   Config::Instance()->MotionSharpness.value_or_default() > 0.0f)) &&
+            RCAS != nullptr && RCAS.get() != nullptr && RCAS->IsInit() &&
+            RCAS->CreateBufferResource(Device, (ID3D11Texture2D*) params.output.resource))
         {
-            params.output = ffxGetResourceDX11(&_context, RCAS->Buffer(), (wchar_t*)L"FSR2_Output", FFX_RESOURCE_STATE_UNORDERED_ACCESS);
+            params.output = ffxGetResourceDX11(&_context, RCAS->Buffer(), (wchar_t*) L"FSR2_Output",
+                                               FFX_RESOURCE_STATE_UNORDERED_ACCESS);
         }
     }
     else
@@ -384,12 +395,12 @@ bool FSR2FeatureDx11::Evaluate(ID3D11DeviceContext* InContext, NVSDK_NGX_Paramet
 
     ID3D11Resource* paramDepth;
     if (InParameters->Get(NVSDK_NGX_Parameter_Depth, &paramDepth) != NVSDK_NGX_Result_Success)
-        InParameters->Get(NVSDK_NGX_Parameter_Depth, (void**)&paramDepth);
+        InParameters->Get(NVSDK_NGX_Parameter_Depth, (void**) &paramDepth);
 
     if (paramDepth)
     {
         LOG_DEBUG("Depth exist..");
-        params.depth = ffxGetResourceDX11(&_context, paramDepth, (wchar_t*)L"FSR2_Depth");
+        params.depth = ffxGetResourceDX11(&_context, paramDepth, (wchar_t*) L"FSR2_Depth");
     }
     else
     {
@@ -405,11 +416,11 @@ bool FSR2FeatureDx11::Evaluate(ID3D11DeviceContext* InContext, NVSDK_NGX_Paramet
     else
     {
         if (InParameters->Get(NVSDK_NGX_Parameter_ExposureTexture, &paramExp) != NVSDK_NGX_Result_Success)
-            InParameters->Get(NVSDK_NGX_Parameter_ExposureTexture, (void**)&paramExp);
+            InParameters->Get(NVSDK_NGX_Parameter_ExposureTexture, (void**) &paramExp);
 
         if (paramExp)
         {
-            params.exposure = ffxGetResourceDX11(&_context, paramExp, (wchar_t*)L"FSR2_Exposure");
+            params.exposure = ffxGetResourceDX11(&_context, paramExp, (wchar_t*) L"FSR2_Exposure");
             LOG_DEBUG("ExposureTexture exist..");
         }
         else
@@ -422,8 +433,9 @@ bool FSR2FeatureDx11::Evaluate(ID3D11DeviceContext* InContext, NVSDK_NGX_Paramet
     }
 
     ID3D11Resource* paramReactiveMask = nullptr;
-    if (InParameters->Get(NVSDK_NGX_Parameter_DLSS_Input_Bias_Current_Color_Mask, &paramReactiveMask) != NVSDK_NGX_Result_Success)
-        InParameters->Get(NVSDK_NGX_Parameter_DLSS_Input_Bias_Current_Color_Mask, (void**)&paramReactiveMask);
+    if (InParameters->Get(NVSDK_NGX_Parameter_DLSS_Input_Bias_Current_Color_Mask, &paramReactiveMask) !=
+        NVSDK_NGX_Result_Success)
+        InParameters->Get(NVSDK_NGX_Parameter_DLSS_Input_Bias_Current_Color_Mask, (void**) &paramReactiveMask);
 
     if (!Config::Instance()->DisableReactiveMask.value_or(paramReactiveMask == nullptr))
     {
@@ -433,20 +445,24 @@ bool FSR2FeatureDx11::Evaluate(ID3D11DeviceContext* InContext, NVSDK_NGX_Paramet
             Config::Instance()->DisableReactiveMask.set_volatile_value(false);
 
             if (Config::Instance()->FsrUseMaskForTransparency.value_or_default())
-                params.transparencyAndComposition = ffxGetResourceDX11(&_context, paramReactiveMask, (wchar_t*)L"FSR2_Transparency", FFX_RESOURCE_STATE_COMPUTE_READ);
+                params.transparencyAndComposition = ffxGetResourceDX11(
+                    &_context, paramReactiveMask, (wchar_t*) L"FSR2_Transparency", FFX_RESOURCE_STATE_COMPUTE_READ);
 
-            if (Config::Instance()->DlssReactiveMaskBias.value_or_default() > 0.0f &&
-                Bias->IsInit() && Bias->CreateBufferResource(Device, paramReactiveMask) && Bias->CanRender())
+            if (Config::Instance()->DlssReactiveMaskBias.value_or_default() > 0.0f && Bias->IsInit() &&
+                Bias->CreateBufferResource(Device, paramReactiveMask) && Bias->CanRender())
             {
-                if (Bias->Dispatch(Device, InContext, (ID3D11Texture2D*)paramReactiveMask, Config::Instance()->DlssReactiveMaskBias.value_or_default(), Bias->Buffer()))
+                if (Bias->Dispatch(Device, InContext, (ID3D11Texture2D*) paramReactiveMask,
+                                   Config::Instance()->DlssReactiveMaskBias.value_or_default(), Bias->Buffer()))
                 {
-                    params.reactive = ffxGetResourceDX11(&_context, Bias->Buffer(), (wchar_t*)L"FSR2_Reactive", FFX_RESOURCE_STATE_COMPUTE_READ);
+                    params.reactive = ffxGetResourceDX11(&_context, Bias->Buffer(), (wchar_t*) L"FSR2_Reactive",
+                                                         FFX_RESOURCE_STATE_COMPUTE_READ);
                 }
             }
             else
             {
                 LOG_DEBUG("Skipping reactive mask, Bias: {0}, Bias Init: {1}, Bias CanRender: {2}",
-                          Config::Instance()->DlssReactiveMaskBias.value_or_default(), Bias->IsInit(), Bias->CanRender());
+                          Config::Instance()->DlssReactiveMaskBias.value_or_default(), Bias->IsInit(),
+                          Bias->CanRender());
             }
         }
     }
@@ -490,12 +506,16 @@ bool FSR2FeatureDx11::Evaluate(ID3D11DeviceContext* InContext, NVSDK_NGX_Paramet
     if (Config::Instance()->FsrVerticalFov.has_value())
         params.cameraFovAngleVertical = Config::Instance()->FsrVerticalFov.value() * 0.0174532925199433f;
     else if (Config::Instance()->FsrHorizontalFov.value_or_default() > 0.0f)
-        params.cameraFovAngleVertical = 2.0f * atan((tan(Config::Instance()->FsrHorizontalFov.value() * 0.0174532925199433f) * 0.5f) / (float)DisplayHeight() * (float)DisplayWidth());
+        params.cameraFovAngleVertical =
+            2.0f * atan((tan(Config::Instance()->FsrHorizontalFov.value() * 0.0174532925199433f) * 0.5f) /
+                        (float) DisplayHeight() * (float) DisplayWidth());
     else
         params.cameraFovAngleVertical = 1.0471975511966f;
 
-    if (InParameters->Get(NVSDK_NGX_Parameter_FrameTimeDeltaInMsec, &params.frameTimeDelta) != NVSDK_NGX_Result_Success || params.frameTimeDelta < 1.0f)
-        params.frameTimeDelta = (float)GetDeltaTime();
+    if (InParameters->Get(NVSDK_NGX_Parameter_FrameTimeDeltaInMsec, &params.frameTimeDelta) !=
+            NVSDK_NGX_Result_Success ||
+        params.frameTimeDelta < 1.0f)
+        params.frameTimeDelta = (float) GetDeltaTime();
 
     if (InParameters->Get(NVSDK_NGX_Parameter_DLSS_Pre_Exposure, &params.preExposure) != NVSDK_NGX_Result_Success)
         params.preExposure = 1.0f;
@@ -511,10 +531,11 @@ bool FSR2FeatureDx11::Evaluate(ID3D11DeviceContext* InContext, NVSDK_NGX_Paramet
 
     // apply rcas
     if (Config::Instance()->RcasEnabled.value_or_default() &&
-        (_sharpness > 0.0f || (Config::Instance()->MotionSharpnessEnabled.value_or_default() && Config::Instance()->MotionSharpness.value_or_default() > 0.0f)) &&
+        (_sharpness > 0.0f || (Config::Instance()->MotionSharpnessEnabled.value_or_default() &&
+                               Config::Instance()->MotionSharpness.value_or_default() > 0.0f)) &&
         RCAS != nullptr && RCAS.get() != nullptr && RCAS->CanRender())
     {
-        RcasConstants rcasConstants{};
+        RcasConstants rcasConstants {};
 
         rcasConstants.Sharpness = _sharpness;
         rcasConstants.DisplayWidth = TargetWidth();
@@ -525,11 +546,11 @@ bool FSR2FeatureDx11::Evaluate(ID3D11DeviceContext* InContext, NVSDK_NGX_Paramet
         rcasConstants.RenderHeight = RenderHeight();
         rcasConstants.RenderWidth = RenderWidth();
 
-
         if (useSS)
         {
-            if (!RCAS->Dispatch(Device, InContext, (ID3D11Texture2D*)params.output.resource, (ID3D11Texture2D*)params.motionVectors.resource,
-                rcasConstants, OutputScaler->Buffer()))
+            if (!RCAS->Dispatch(Device, InContext, (ID3D11Texture2D*) params.output.resource,
+                                (ID3D11Texture2D*) params.motionVectors.resource, rcasConstants,
+                                OutputScaler->Buffer()))
             {
                 Config::Instance()->RcasEnabled.set_volatile_value(false);
                 return true;
@@ -537,8 +558,9 @@ bool FSR2FeatureDx11::Evaluate(ID3D11DeviceContext* InContext, NVSDK_NGX_Paramet
         }
         else
         {
-            if (!RCAS->Dispatch(Device, InContext, (ID3D11Texture2D*)params.output.resource, (ID3D11Texture2D*)params.motionVectors.resource,
-                rcasConstants, (ID3D11Texture2D*)paramOutput))
+            if (!RCAS->Dispatch(Device, InContext, (ID3D11Texture2D*) params.output.resource,
+                                (ID3D11Texture2D*) params.motionVectors.resource, rcasConstants,
+                                (ID3D11Texture2D*) paramOutput))
             {
                 Config::Instance()->RcasEnabled.set_volatile_value(false);
                 return true;
@@ -549,7 +571,7 @@ bool FSR2FeatureDx11::Evaluate(ID3D11DeviceContext* InContext, NVSDK_NGX_Paramet
     if (useSS)
     {
         LOG_DEBUG("scaling output...");
-        if (!OutputScaler->Dispatch(Device, InContext, OutputScaler->Buffer(), (ID3D11Texture2D*)paramOutput))
+        if (!OutputScaler->Dispatch(Device, InContext, OutputScaler->Buffer(), (ID3D11Texture2D*) paramOutput))
         {
             Config::Instance()->OutputScalingEnabled.set_volatile_value(false);
             State::Instance().changeBackend[Handle()->Id] = true;
@@ -606,7 +628,4 @@ bool FSR2FeatureDx11::Evaluate(ID3D11DeviceContext* InContext, NVSDK_NGX_Paramet
     return true;
 }
 
-FSR2FeatureDx11::~FSR2FeatureDx11()
-{
-}
-
+FSR2FeatureDx11::~FSR2FeatureDx11() { ReleaseResources(); }

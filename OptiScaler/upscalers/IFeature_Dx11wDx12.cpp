@@ -1,20 +1,26 @@
 #include "IFeature_Dx11wDx12.h"
+
 #include <Config.h>
 
-#define ASSIGN_DESC(dest, src) dest.Width = src.Width; dest.Height = src.Height; dest.Format = src.Format; dest.BindFlags = src.BindFlags; dest.MiscFlags = src.MiscFlags; 
+#define ASSIGN_DESC(dest, src)                                                                                         \
+    dest.Width = src.Width;                                                                                            \
+    dest.Height = src.Height;                                                                                          \
+    dest.Format = src.Format;                                                                                          \
+    dest.BindFlags = src.BindFlags;                                                                                    \
+    dest.MiscFlags = src.MiscFlags;
 
-#define SAFE_RELEASE(p)		\
-do {						\
-	if(p && p != nullptr)	\
-	{						\
-		(p)->Release();		\
-		(p) = nullptr;		\
-	}						\
-} while((void)0, 0)	
+#define SAFE_RELEASE(p)                                                                                                \
+    do                                                                                                                 \
+    {                                                                                                                  \
+        if (p && p != nullptr)                                                                                         \
+        {                                                                                                              \
+            (p)->Release();                                                                                            \
+            (p) = nullptr;                                                                                             \
+        }                                                                                                              \
+    } while ((void) 0, 0)
 
-
-
-void IFeature_Dx11wDx12::ResourceBarrier(ID3D12GraphicsCommandList* commandList, ID3D12Resource* resource, D3D12_RESOURCE_STATES beforeState, D3D12_RESOURCE_STATES afterState)
+void IFeature_Dx11wDx12::ResourceBarrier(ID3D12GraphicsCommandList* commandList, ID3D12Resource* resource,
+                                         D3D12_RESOURCE_STATES beforeState, D3D12_RESOURCE_STATES afterState)
 {
     D3D12_RESOURCE_BARRIER barrier = {};
     barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
@@ -25,10 +31,11 @@ void IFeature_Dx11wDx12::ResourceBarrier(ID3D12GraphicsCommandList* commandList,
     commandList->ResourceBarrier(1, &barrier);
 }
 
-bool IFeature_Dx11wDx12::CopyTextureFrom11To12(ID3D11Resource* InResource, D3D11_TEXTURE2D_RESOURCE_C* OutResource, bool InCopy, bool InDontUseNTShared)
+bool IFeature_Dx11wDx12::CopyTextureFrom11To12(ID3D11Resource* InResource, D3D11_TEXTURE2D_RESOURCE_C* OutResource,
+                                               bool InCopy, bool InDontUseNTShared)
 {
     ID3D11Texture2D* originalTexture = nullptr;
-    D3D11_TEXTURE2D_DESC desc{};
+    D3D11_TEXTURE2D_DESC desc {};
 
     auto result = InResource->QueryInterface(IID_PPV_ARGS(&originalTexture));
 
@@ -38,17 +45,20 @@ bool IFeature_Dx11wDx12::CopyTextureFrom11To12(ID3D11Resource* InResource, D3D11
     originalTexture->GetDesc(&desc);
 
     // check shared nt handle usage later
-    if (!(desc.MiscFlags & D3D11_RESOURCE_MISC_SHARED) && !(desc.MiscFlags & D3D11_RESOURCE_MISC_SHARED_NTHANDLE) && !InDontUseNTShared)
+    if (!(desc.MiscFlags & D3D11_RESOURCE_MISC_SHARED) && !(desc.MiscFlags & D3D11_RESOURCE_MISC_SHARED_NTHANDLE) &&
+        !InDontUseNTShared)
     {
         if (desc.Width != OutResource->Desc.Width || desc.Height != OutResource->Desc.Height ||
             desc.Format != OutResource->Desc.Format || desc.BindFlags != OutResource->Desc.BindFlags ||
-            OutResource->SharedTexture == nullptr || !(OutResource->Desc.MiscFlags & D3D11_RESOURCE_MISC_SHARED_NTHANDLE))
+            OutResource->SharedTexture == nullptr ||
+            !(OutResource->Desc.MiscFlags & D3D11_RESOURCE_MISC_SHARED_NTHANDLE))
         {
             if (OutResource->SharedTexture != nullptr)
             {
                 OutResource->SharedTexture->Release();
 
-                if (OutResource->Dx12Handle != NULL && (OutResource->Desc.MiscFlags & D3D11_RESOURCE_MISC_SHARED_NTHANDLE))
+                if (OutResource->Dx12Handle != NULL &&
+                    (OutResource->Desc.MiscFlags & D3D11_RESOURCE_MISC_SHARED_NTHANDLE))
                     CloseHandle(OutResource->Dx12Handle);
 
                 OutResource->Dx11Handle = NULL;
@@ -99,51 +109,90 @@ bool IFeature_Dx11wDx12::CopyTextureFrom11To12(ID3D11Resource* InResource, D3D11
     }
     else if ((desc.MiscFlags & D3D11_RESOURCE_MISC_SHARED) == 0 && InDontUseNTShared)
     {
-        if (desc.Width != OutResource->Desc.Width || desc.Height != OutResource->Desc.Height ||
-            desc.Format != OutResource->Desc.Format || desc.BindFlags != OutResource->Desc.BindFlags ||
-            OutResource->SharedTexture == nullptr || (OutResource->Desc.MiscFlags & D3D11_RESOURCE_MISC_SHARED_NTHANDLE))
+        if (desc.Format == DXGI_FORMAT_R24G8_TYPELESS)
         {
-            if (OutResource->SharedTexture != nullptr)
+            if (DT == nullptr || DT.get() == nullptr)
+                DT = std::make_unique<DepthTransfer_Dx11>("DT", Dx11Device);
+
+            if (DT->Buffer() == nullptr)
+                DT->CreateBufferResource(Dx11Device, InResource);
+
+            if (DT->Dispatch(Dx11Device, Dx11DeviceContext, originalTexture, DT->Buffer()))
             {
-                OutResource->SharedTexture->Release();
+                IDXGIResource1* resource = nullptr;
+                result = DT->Buffer()->QueryInterface(IID_PPV_ARGS(&resource));
 
-                if (OutResource->Dx12Handle != NULL && (OutResource->Desc.MiscFlags & D3D11_RESOURCE_MISC_SHARED_NTHANDLE))
-                    CloseHandle(OutResource->Dx12Handle);
+                if (result != S_OK || resource == nullptr)
+                {
+                    LOG_ERROR("QueryInterface(resource) error: {0:x}", result);
+                    return false;
+                }
 
-                OutResource->Dx11Handle = NULL;
-                OutResource->Dx12Handle = NULL;
+                // Get shared handle
+                result = resource->GetSharedHandle(&OutResource->Dx11Handle);
+
+                if (result != S_OK)
+                {
+                    LOG_ERROR("GetSharedHandle error: {0:x}", result);
+                    resource->Release();
+                    return false;
+                }
+
+                resource->Release();
             }
-
-
-            desc.MiscFlags = D3D11_RESOURCE_MISC_SHARED;
-            ASSIGN_DESC(OutResource->Desc, desc);
-
-            result = Dx11Device->CreateTexture2D(&desc, nullptr, &OutResource->SharedTexture);
-
-
-            IDXGIResource1* resource;
-            result = OutResource->SharedTexture->QueryInterface(IID_PPV_ARGS(&resource));
-
-            if (result != S_OK)
-            {
-                LOG_ERROR("QueryInterface(resource) error: {0:x}", result);
-                return false;
-            }
-
-            // Get shared handle
-            result = resource->GetSharedHandle(&OutResource->Dx11Handle);
-
-            if (result != S_OK)
-            {
-                LOG_ERROR("GetSharedHandle error: {0:x}", result);
-                return false;
-            }
-
-            resource->Release();
         }
+        else
+        {
+            if (desc.Width != OutResource->Desc.Width || desc.Height != OutResource->Desc.Height ||
+                desc.Format != OutResource->Desc.Format || desc.BindFlags != OutResource->Desc.BindFlags ||
+                OutResource->SharedTexture == nullptr ||
+                (OutResource->Desc.MiscFlags & D3D11_RESOURCE_MISC_SHARED_NTHANDLE))
+            {
+                if (OutResource->SharedTexture != nullptr)
+                {
+                    OutResource->SharedTexture->Release();
 
-        if (InCopy && OutResource->SharedTexture != nullptr)
-            Dx11DeviceContext->CopyResource(OutResource->SharedTexture, InResource);
+                    if (OutResource->Dx12Handle != NULL &&
+                        (OutResource->Desc.MiscFlags & D3D11_RESOURCE_MISC_SHARED_NTHANDLE))
+                        CloseHandle(OutResource->Dx12Handle);
+
+                    OutResource->Dx11Handle = NULL;
+                    OutResource->Dx12Handle = NULL;
+                }
+
+                if (desc.Format == DXGI_FORMAT_R24G8_TYPELESS)
+                    desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+
+                desc.MiscFlags = D3D11_RESOURCE_MISC_SHARED;
+                ASSIGN_DESC(OutResource->Desc, desc);
+
+                result = Dx11Device->CreateTexture2D(&desc, nullptr, &OutResource->SharedTexture);
+
+                IDXGIResource1* resource;
+                result = OutResource->SharedTexture->QueryInterface(IID_PPV_ARGS(&resource));
+
+                if (result != S_OK)
+                {
+                    LOG_ERROR("QueryInterface(resource) error: {0:x}", result);
+                    return false;
+                }
+
+                // Get shared handle
+                result = resource->GetSharedHandle(&OutResource->Dx11Handle);
+
+                if (result != S_OK)
+                {
+                    LOG_ERROR("GetSharedHandle error: {0:x}", result);
+                    resource->Release();
+                    return false;
+                }
+
+                resource->Release();
+            }
+
+            if (InCopy && OutResource->SharedTexture != nullptr)
+                Dx11DeviceContext->CopyResource(OutResource->SharedTexture, InResource);
+        }
     }
     else
     {
@@ -160,7 +209,8 @@ bool IFeature_Dx11wDx12::CopyTextureFrom11To12(ID3D11Resource* InResource, D3D11
             }
 
             // Get shared handle
-            if ((desc.MiscFlags & D3D11_RESOURCE_MISC_SHARED) != 0 && (desc.MiscFlags & D3D11_RESOURCE_MISC_SHARED_NTHANDLE) != 0)
+            if ((desc.MiscFlags & D3D11_RESOURCE_MISC_SHARED) != 0 &&
+                (desc.MiscFlags & D3D11_RESOURCE_MISC_SHARED_NTHANDLE) != 0)
             {
                 DWORD access = DXGI_SHARED_RESOURCE_READ;
 
@@ -182,7 +232,7 @@ bool IFeature_Dx11wDx12::CopyTextureFrom11To12(ID3D11Resource* InResource, D3D11
 
             resource->Release();
 
-            OutResource->SharedTexture = (ID3D11Texture2D*)InResource;
+            OutResource->SharedTexture = (ID3D11Texture2D*) InResource;
         }
     }
 
@@ -207,9 +257,19 @@ void IFeature_Dx11wDx12::ReleaseSharedResources()
 
     ReleaseSyncResources();
 
-    SAFE_RELEASE(Dx12CommandList);
+    SAFE_RELEASE(Dx12CommandList[0]);
+    SAFE_RELEASE(Dx12CommandList[1]);
     SAFE_RELEASE(Dx12CommandQueue);
-    SAFE_RELEASE(Dx12CommandAllocator);
+    SAFE_RELEASE(Dx12CommandAllocator[0]);
+    SAFE_RELEASE(Dx12CommandAllocator[1]);
+    SAFE_RELEASE(Dx12Fence);
+
+    if (Dx12FenceEvent)
+    {
+        CloseHandle(Dx12FenceEvent);
+        Dx12FenceEvent = nullptr;
+    }
+
     SAFE_RELEASE(Dx12Device);
 }
 
@@ -217,35 +277,16 @@ void IFeature_Dx11wDx12::ReleaseSyncResources()
 {
     SAFE_RELEASE(dx11FenceTextureCopy);
     SAFE_RELEASE(dx12FenceTextureCopy);
-    SAFE_RELEASE(dx12FenceQuery);
-    SAFE_RELEASE(dx11FenceCopySync);
-    SAFE_RELEASE(dx12FenceCopySync);
-    SAFE_RELEASE(dx11FenceCopyOutput);
-    SAFE_RELEASE(dx12FenceCopyOutput);
-    SAFE_RELEASE(queryTextureCopy);
-    SAFE_RELEASE(queryCopyOutputFence);
-    SAFE_RELEASE(queryCopyOutput);
 
     if (dx11SHForTextureCopy != NULL)
     {
         CloseHandle(dx11SHForTextureCopy);
         dx11SHForTextureCopy = NULL;
     }
-
-    if (dx11SHForCopyOutput != NULL)
-    {
-        CloseHandle(dx11SHForCopyOutput);
-        dx11SHForCopyOutput = NULL;
-    }
-
-    if (dx12SHForCopyOutput != NULL)
-    {
-        CloseHandle(dx12SHForCopyOutput);
-        dx12SHForCopyOutput = NULL;
-    }
 }
 
-void IFeature_Dx11wDx12::GetHardwareAdapter(IDXGIFactory1* InFactory, IDXGIAdapter** InAdapter, D3D_FEATURE_LEVEL InFeatureLevel, bool InRequestHighPerformanceAdapter)
+void IFeature_Dx11wDx12::GetHardwareAdapter(IDXGIFactory1* InFactory, IDXGIAdapter** InAdapter,
+                                            D3D_FEATURE_LEVEL InFeatureLevel, bool InRequestHighPerformanceAdapter)
 {
     LOG_FUNC();
 
@@ -256,13 +297,13 @@ void IFeature_Dx11wDx12::GetHardwareAdapter(IDXGIFactory1* InFactory, IDXGIAdapt
     IDXGIFactory6* factory6;
     if (SUCCEEDED(InFactory->QueryInterface(IID_PPV_ARGS(&factory6))))
     {
-        for (
-            UINT adapterIndex = 0;
-            DXGI_ERROR_NOT_FOUND != factory6->EnumAdapterByGpuPreference(
-            adapterIndex,
-            InRequestHighPerformanceAdapter == true ? DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE : DXGI_GPU_PREFERENCE_UNSPECIFIED,
-            IID_PPV_ARGS(&adapter));
-            ++adapterIndex)
+        for (UINT adapterIndex = 0;
+             DXGI_ERROR_NOT_FOUND != factory6->EnumAdapterByGpuPreference(adapterIndex,
+                                                                          InRequestHighPerformanceAdapter == true
+                                                                              ? DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE
+                                                                              : DXGI_GPU_PREFERENCE_UNSPECIFIED,
+                                                                          IID_PPV_ARGS(&adapter));
+             ++adapterIndex)
         {
             DXGI_ADAPTER_DESC1 desc;
             adapter->GetDesc1(&desc);
@@ -288,7 +329,8 @@ void IFeature_Dx11wDx12::GetHardwareAdapter(IDXGIFactory1* InFactory, IDXGIAdapt
     }
     else
     {
-        for (UINT adapterIndex = 0; DXGI_ERROR_NOT_FOUND != InFactory->EnumAdapters1(adapterIndex, &adapter); ++adapterIndex)
+        for (UINT adapterIndex = 0; DXGI_ERROR_NOT_FOUND != InFactory->EnumAdapters1(adapterIndex, &adapter);
+             ++adapterIndex)
         {
             DXGI_ADAPTER_DESC1 desc;
             adapter->GetDesc1(&desc);
@@ -376,9 +418,10 @@ HRESULT IFeature_Dx11wDx12::CreateDx12Device(D3D_FEATURE_LEVEL InFeatureLevel)
         }
     }
 
-    if (Dx12CommandAllocator == nullptr)
+    if (Dx12CommandAllocator[0] == nullptr)
     {
-        result = Dx12Device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&Dx12CommandAllocator));
+        result =
+            Dx12Device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&Dx12CommandAllocator[0]));
 
         if (result != S_OK)
         {
@@ -389,14 +432,67 @@ HRESULT IFeature_Dx11wDx12::CreateDx12Device(D3D_FEATURE_LEVEL InFeatureLevel)
         }
     }
 
-    if (Dx12CommandList == nullptr)
+    if (Dx12CommandAllocator[1] == nullptr)
+    {
+        result =
+            Dx12Device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&Dx12CommandAllocator[1]));
+
+        if (result != S_OK)
+        {
+            LOG_ERROR("CreateCommandAllocator error: {0:x}", result);
+            State::Instance().vulkanSkipHooks = false;
+            State::Instance().skipSpoofing = false;
+            return E_NOINTERFACE;
+        }
+    }
+
+    if (Dx12CommandList[0] == nullptr)
     {
         // CreateCommandList
-        result = Dx12Device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, Dx12CommandAllocator, nullptr, IID_PPV_ARGS(&Dx12CommandList));
+        result = Dx12Device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, Dx12CommandAllocator[0], nullptr,
+                                               IID_PPV_ARGS(&Dx12CommandList[0]));
 
         if (result != S_OK)
         {
             LOG_ERROR("CreateCommandList error: {0:x}", result);
+            State::Instance().vulkanSkipHooks = false;
+            State::Instance().skipSpoofing = false;
+            return E_NOINTERFACE;
+        }
+    }
+
+    if (Dx12CommandList[1] == nullptr)
+    {
+        // CreateCommandList
+        result = Dx12Device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, Dx12CommandAllocator[1], nullptr,
+                                               IID_PPV_ARGS(&Dx12CommandList[1]));
+
+        if (result != S_OK)
+        {
+            LOG_ERROR("CreateCommandList error: {0:x}", result);
+            State::Instance().vulkanSkipHooks = false;
+            State::Instance().skipSpoofing = false;
+            return E_NOINTERFACE;
+        }
+    }
+
+    if (Dx12Fence == nullptr)
+    {
+        result = Dx12Device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&Dx12Fence));
+
+        if (result != S_OK)
+        {
+            LOG_ERROR("CreateFence error: {0:X}", result);
+            State::Instance().vulkanSkipHooks = false;
+            State::Instance().skipSpoofing = false;
+            return E_NOINTERFACE;
+        }
+
+        Dx12FenceEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr);
+
+        if (Dx12FenceEvent == nullptr)
+        {
+            LOG_ERROR("CreateEvent error!");
             State::Instance().vulkanSkipHooks = false;
             State::Instance().skipSpoofing = false;
             return E_NOINTERFACE;
@@ -410,40 +506,32 @@ HRESULT IFeature_Dx11wDx12::CreateDx12Device(D3D_FEATURE_LEVEL InFeatureLevel)
 
 bool IFeature_Dx11wDx12::ProcessDx11Textures(const NVSDK_NGX_Parameter* InParameters)
 {
+    // Wait for last frame
+    if (Dx12Fence->GetCompletedValue() < _frameCount)
+    {
+        Dx12Fence->SetEventOnCompletion(_frameCount, Dx12FenceEvent);
+        WaitForSingleObject(Dx12FenceEvent, INFINITE);
+    }
+
+    auto frame = _frameCount % 2;
+
+    Dx12CommandAllocator[frame]->Reset();
+    Dx12CommandList[frame]->Reset(Dx12CommandAllocator[frame], nullptr);
+
     HRESULT result;
 
-    // Query only
-    if (Config::Instance()->TextureSyncMethod.value_or_default() == 5 || _frameCount < 200)
-    {
-        if (queryTextureCopy == nullptr)
-        {
-            D3D11_QUERY_DESC pQueryDesc;
-            pQueryDesc.Query = D3D11_QUERY_EVENT;
-            pQueryDesc.MiscFlags = 0;
-
-            result = Device->CreateQuery(&pQueryDesc, &queryTextureCopy);
-
-            if (result != S_OK || queryTextureCopy == nullptr)
-            {
-                LOG_ERROR("can't create queryTextureCopy!");
-                return false;
-            }
-        }
-
-        // Associate the query with the copy operation
-        DeviceContext->Begin(queryTextureCopy);
-    }
+    auto dontUseNTS = Config::Instance()->DontUseNTShared.value_or_default();
 
 #pragma region Texture copies
 
     ID3D11Resource* paramColor;
     if (InParameters->Get(NVSDK_NGX_Parameter_Color, &paramColor) != NVSDK_NGX_Result_Success)
-        InParameters->Get(NVSDK_NGX_Parameter_Color, (void**)&paramColor);
+        InParameters->Get(NVSDK_NGX_Parameter_Color, (void**) &paramColor);
 
     if (paramColor)
     {
         LOG_DEBUG("Color exist..");
-        if (CopyTextureFrom11To12(paramColor, &dx11Color, true, Config::Instance()->DontUseNTShared.value_or_default()) == NULL)
+        if (CopyTextureFrom11To12(paramColor, &dx11Color, true, dontUseNTS) == false)
             return false;
     }
     else
@@ -454,12 +542,12 @@ bool IFeature_Dx11wDx12::ProcessDx11Textures(const NVSDK_NGX_Parameter* InParame
 
     ID3D11Resource* paramMv;
     if (InParameters->Get(NVSDK_NGX_Parameter_MotionVectors, &paramMv) != NVSDK_NGX_Result_Success)
-        InParameters->Get(NVSDK_NGX_Parameter_MotionVectors, (void**)&paramMv);
+        InParameters->Get(NVSDK_NGX_Parameter_MotionVectors, (void**) &paramMv);
 
     if (paramMv)
     {
         LOG_DEBUG("MotionVectors exist..");
-        if (CopyTextureFrom11To12(paramMv, &dx11Mv, true, Config::Instance()->DontUseNTShared.value_or_default()) == false)
+        if (CopyTextureFrom11To12(paramMv, &dx11Mv, true, dontUseNTS) == false)
             return false;
     }
     else
@@ -469,12 +557,13 @@ bool IFeature_Dx11wDx12::ProcessDx11Textures(const NVSDK_NGX_Parameter* InParame
     }
 
     if (InParameters->Get(NVSDK_NGX_Parameter_Output, &paramOutput[_frameCount % 2]) != NVSDK_NGX_Result_Success)
-        InParameters->Get(NVSDK_NGX_Parameter_Output, (void**)&paramOutput[_frameCount % 2]);
+        InParameters->Get(NVSDK_NGX_Parameter_Output, (void**) &paramOutput[_frameCount % 2]);
 
     if (paramOutput[_frameCount % 2])
     {
         LOG_DEBUG("Output exist..");
-        if (CopyTextureFrom11To12(paramOutput[_frameCount % 2], &dx11Out, false, Config::Instance()->DontUseNTShared.value_or(true)) == false)
+        if (CopyTextureFrom11To12(paramOutput[_frameCount % 2], &dx11Out, false,
+                                  Config::Instance()->DontUseNTShared.value_or(true)) == false)
             return false;
     }
     else
@@ -485,11 +574,12 @@ bool IFeature_Dx11wDx12::ProcessDx11Textures(const NVSDK_NGX_Parameter* InParame
 
     ID3D11Resource* paramDepth;
     if (InParameters->Get(NVSDK_NGX_Parameter_Depth, &paramDepth) != NVSDK_NGX_Result_Success)
-        InParameters->Get(NVSDK_NGX_Parameter_Depth, (void**)&paramDepth);
+        InParameters->Get(NVSDK_NGX_Parameter_Depth, (void**) &paramDepth);
 
     if (paramDepth)
     {
         LOG_DEBUG("Depth exist..");
+
         if (CopyTextureFrom11To12(paramDepth, &dx11Depth, true, true) == false)
             return false;
     }
@@ -504,13 +594,13 @@ bool IFeature_Dx11wDx12::ProcessDx11Textures(const NVSDK_NGX_Parameter* InParame
     else
     {
         if (InParameters->Get(NVSDK_NGX_Parameter_ExposureTexture, &paramExposure) != NVSDK_NGX_Result_Success)
-            InParameters->Get(NVSDK_NGX_Parameter_ExposureTexture, (void**)&paramExposure);
+            InParameters->Get(NVSDK_NGX_Parameter_ExposureTexture, (void**) &paramExposure);
 
         if (paramExposure)
         {
             LOG_DEBUG("ExposureTexture exist..");
 
-            if (CopyTextureFrom11To12(paramExposure, &dx11Exp, true, Config::Instance()->DontUseNTShared.value_or_default()) == false)
+            if (CopyTextureFrom11To12(paramExposure, &dx11Exp, true, dontUseNTS) == false)
                 return false;
         }
         else
@@ -522,8 +612,9 @@ bool IFeature_Dx11wDx12::ProcessDx11Textures(const NVSDK_NGX_Parameter* InParame
     }
 
     ID3D11Resource* paramReactiveMask = nullptr;
-    if (InParameters->Get(NVSDK_NGX_Parameter_DLSS_Input_Bias_Current_Color_Mask, &paramReactiveMask) != NVSDK_NGX_Result_Success)
-        InParameters->Get(NVSDK_NGX_Parameter_DLSS_Input_Bias_Current_Color_Mask, (void**)&paramReactiveMask);
+    if (InParameters->Get(NVSDK_NGX_Parameter_DLSS_Input_Bias_Current_Color_Mask, &paramReactiveMask) !=
+        NVSDK_NGX_Result_Success)
+        InParameters->Get(NVSDK_NGX_Parameter_DLSS_Input_Bias_Current_Color_Mask, (void**) &paramReactiveMask);
 
     if (!Config::Instance()->DisableReactiveMask.value_or(paramReactiveMask == nullptr))
     {
@@ -532,7 +623,7 @@ bool IFeature_Dx11wDx12::ProcessDx11Textures(const NVSDK_NGX_Parameter* InParame
             Config::Instance()->DisableReactiveMask.set_volatile_value(false);
             LOG_DEBUG("Input Bias mask exist..");
 
-            if (CopyTextureFrom11To12(paramReactiveMask, &dx11Reactive, true, Config::Instance()->DontUseNTShared.value_or_default()) == false)
+            if (CopyTextureFrom11To12(paramReactiveMask, &dx11Reactive, true, dontUseNTS) == false)
                 return false;
         }
         // This is only needed for XeSS
@@ -548,18 +639,6 @@ bool IFeature_Dx11wDx12::ProcessDx11Textures(const NVSDK_NGX_Parameter* InParame
 
 #pragma endregion
 
-    // query sync
-    if (Config::Instance()->TextureSyncMethod.value_or_default() == 5 || _frameCount < 200)
-    {
-        LOG_DEBUG("Queries!");
-        DeviceContext->End(queryTextureCopy);
-        DeviceContext->Flush();
-
-        // Wait for the query to be ready
-        while (Dx11DeviceContext->GetData(queryTextureCopy, NULL, 0, D3D11_ASYNC_GETDATA_DONOTFLUSH) == S_FALSE)
-            std::this_thread::yield();
-    }
-    else
     {
         if (dx11FenceTextureCopy == nullptr)
         {
@@ -572,7 +651,7 @@ bool IFeature_Dx11wDx12::ProcessDx11Textures(const NVSDK_NGX_Parameter* InParame
             }
         }
 
-        if (dx11SHForTextureCopy == NULL)
+        if (dx11SHForTextureCopy == nullptr)
         {
             result = dx11FenceTextureCopy->CreateSharedHandle(nullptr, GENERIC_ALL, nullptr, &dx11SHForTextureCopy);
 
@@ -592,59 +671,25 @@ bool IFeature_Dx11wDx12::ProcessDx11Textures(const NVSDK_NGX_Parameter* InParame
         }
 
         // Fence
-        if (Config::Instance()->TextureSyncMethod.value_or_default() > 0)
+        LOG_DEBUG("Dx11 Signal & Dx12 Wait!");
+
+        result = Dx11DeviceContext->Signal(dx11FenceTextureCopy, _fenceValue);
+        Dx11DeviceContext->Flush();
+
+        if (result != S_OK)
         {
-            LOG_DEBUG("Dx11 Signal & Dx12 Wait!");
-
-            result = Dx11DeviceContext->Signal(dx11FenceTextureCopy, 10);
-
-            if (result != S_OK)
-            {
-                LOG_ERROR("Dx11DeviceContext->Signal(dx11FenceTextureCopy, 10) : {0:x}!", result);
-                return false;
-            }
-        }
-
-        // Flush
-        if (Config::Instance()->TextureSyncMethod.value_or_default() > 2)
-        {
-            LOG_DEBUG("Dx11DeviceContext->Flush()!");
-            Dx11DeviceContext->Flush();
+            LOG_ERROR("Dx11DeviceContext->Signal(dx11FenceTextureCopy, 10) : {0:x}!", result);
+            return false;
         }
 
         // Gpu Sync
-        if (Config::Instance()->TextureSyncMethod.value_or_default() == 1 || Config::Instance()->TextureSyncMethod.value_or_default() == 3)
+        result = Dx12CommandQueue->Wait(dx12FenceTextureCopy, _fenceValue);
+        _fenceValue++;
+
+        if (result != S_OK)
         {
-            result = Dx12CommandQueue->Wait(dx12FenceTextureCopy, 10);
-
-            if (result != S_OK)
-            {
-                LOG_ERROR("Dx12CommandQueue->Wait(dx12fence_1, 10) : {0:x}!", result);
-                return false;
-            }
-        }
-        // Event Sync
-        else if (Config::Instance()->TextureSyncMethod.value_or_default() != 0)
-        {
-            // wait for end of operation
-            if (dx12FenceTextureCopy->GetCompletedValue() < 10)
-            {
-                auto fenceEvent12 = CreateEvent(nullptr, FALSE, FALSE, nullptr);
-
-                if (fenceEvent12)
-                {
-                    result = dx12FenceTextureCopy->SetEventOnCompletion(10, fenceEvent12);
-
-                    if (result != S_OK)
-                    {
-                        LOG_ERROR("dx12FenceTextureCopy->SetEventOnCompletion(10, fenceEvent12) : {0:x}!", result);
-                        return false;
-                    }
-
-                    WaitForSingleObject(fenceEvent12, INFINITE);
-                    CloseHandle(fenceEvent12);
-                }
-            }
+            LOG_ERROR("Dx12CommandQueue->Wait(dx12fence_1, 10) : {0:x}!", result);
+            return false;
         }
     }
 
@@ -713,6 +758,8 @@ bool IFeature_Dx11wDx12::ProcessDx11Textures(const NVSDK_NGX_Parameter* InParame
             return false;
         }
 
+        auto desc = dx11Depth.Dx12Resource->GetDesc();
+
         dx11Depth.Dx12Handle = dx11Depth.Dx11Handle;
     }
 
@@ -736,7 +783,8 @@ bool IFeature_Dx11wDx12::ProcessDx11Textures(const NVSDK_NGX_Parameter* InParame
         dx11Exp.Dx12Handle = dx11Exp.Dx11Handle;
     }
 
-    if (!Config::Instance()->DisableReactiveMask.value_or(false) && paramReactiveMask && dx11Reactive.Dx12Handle != dx11Reactive.Dx11Handle)
+    if (!Config::Instance()->DisableReactiveMask.value_or(false) && paramReactiveMask &&
+        dx11Reactive.Dx12Handle != dx11Reactive.Dx11Handle)
     {
         if (dx11Reactive.Dx12Handle != NULL)
             CloseHandle(dx11Reactive.Dx12Handle);
@@ -759,197 +807,21 @@ bool IFeature_Dx11wDx12::ProcessDx11Textures(const NVSDK_NGX_Parameter* InParame
 
 bool IFeature_Dx11wDx12::CopyBackOutput()
 {
-    HRESULT result;
-
-    // No sync
-    if (Config::Instance()->CopyBackSyncMethod.value_or_default() == 0 && _frameCount >= 200)
+    // Fence ones
     {
-        Dx11DeviceContext->CopyResource(paramOutput[_frameCount % 2], dx11Out.SharedTexture);
-        return true;
-    }
-
-    //Fence ones
-    if (Config::Instance()->CopyBackSyncMethod.value_or_default() != 5 && _frameCount >= 200)
-    {
-        if (dx12FenceCopySync == nullptr)
-        {
-            result = Dx12Device->CreateFence(0, D3D12_FENCE_FLAG_SHARED, IID_PPV_ARGS(&dx12FenceCopySync));
-
-            if (result != S_OK)
-            {
-                LOG_ERROR("Can't create dx12FenceCopySync {0:x}", result);
-                return false;
-            }
-        }
-
-        if (dx12SHForCopyOutput == NULL)
-        {
-            result = Dx12Device->CreateSharedHandle(dx12FenceCopySync, nullptr, GENERIC_ALL, nullptr, &dx12SHForCopyOutput);
-
-            if (result != S_OK)
-            {
-                LOG_ERROR("Can't create sharedhandle for dx12FenceCopySync {0:x}", result);
-                return false;
-            }
-
-            result = Dx11Device->OpenSharedFence(dx12SHForCopyOutput, IID_PPV_ARGS(&dx11FenceCopySync));
-
-            if (result != S_OK)
-            {
-                LOG_ERROR("Can't create open sharedhandle for dx11FenceCopySync {0:x}", result);
-                return false;
-            }
-        }
-
-        Dx12CommandQueue->Signal(dx12FenceCopySync, 20);
-
-        if (Config::Instance()->CopyBackSyncMethod.value_or_default() == 1 || Config::Instance()->CopyBackSyncMethod.value_or_default() == 3)
-        {
-            // wait for fsr on dx12
-            Dx11DeviceContext->Wait(dx11FenceCopySync, 20);
-        }
-        else
-        {
-            // wait for end of operation
-            if (dx12FenceCopySync->GetCompletedValue() < 20)
-            {
-                auto fenceEvent12 = CreateEvent(nullptr, FALSE, FALSE, nullptr);
-
-                if (fenceEvent12)
-                {
-                    result = dx12FenceCopySync->SetEventOnCompletion(20, fenceEvent12);
-
-                    if (result != S_OK)
-                    {
-                        LOG_ERROR("dx12FenceCopySync->SetEventOnCompletion(20, fenceEvent12) : {0:x}!", result);
-                        return false;
-                    }
-
-                    WaitForSingleObject(fenceEvent12, INFINITE);
-                    CloseHandle(fenceEvent12);
-                }
-            }
-        }
-
-        if (dx11FenceCopyOutput == nullptr)
-        {
-            result = Dx11Device->CreateFence(0, D3D11_FENCE_FLAG_SHARED, IID_PPV_ARGS(&dx11FenceCopyOutput));
-
-            if (result != S_OK)
-            {
-                LOG_ERROR("Can't create dx11FenceCopyOutput {0:x}", result);
-                return false;
-            }
-        }
-
-        if (dx11SHForCopyOutput == NULL)
-        {
-            result = dx11FenceCopyOutput->CreateSharedHandle(nullptr, GENERIC_ALL, nullptr, &dx11SHForCopyOutput);
-
-            if (result != S_OK)
-            {
-                LOG_ERROR("Can't create sharedhandle for dx11FenceTextureCopy {0:x}", result);
-                return false;
-            }
-
-            result = Dx12Device->OpenSharedHandle(dx11SHForCopyOutput, IID_PPV_ARGS(&dx12FenceCopyOutput));
-
-            if (result != S_OK)
-            {
-                LOG_ERROR("Can't create open sharedhandle for dx12FenceTextureCopy {0:x}", result);
-                return false;
-            }
-        }
+        // wait for fsr on dx12
+        Dx11DeviceContext->Wait(dx11FenceTextureCopy, _fenceValue);
+        _fenceValue++;
 
         // Copy Back
         Dx11DeviceContext->CopyResource(paramOutput[_frameCount % 2], dx11Out.SharedTexture);
-
-        result = Dx11DeviceContext->Signal(dx11FenceCopyOutput, 30);
-
-        if (result != S_OK)
-        {
-            LOG_ERROR("Dx11DeviceContext->Signal(dx11FenceTextureCopy, 30) : {0:x}!", result);
-            return false;
-        }
-
-        // fence + flush
-        if (Config::Instance()->CopyBackSyncMethod.value_or_default() > 2)
-            Dx11DeviceContext->Flush();
-
-        if (Config::Instance()->CopyBackSyncMethod.value_or_default() == 1 || Config::Instance()->CopyBackSyncMethod.value_or_default() == 3)
-        {
-            result = Dx12CommandQueue->Wait(dx12FenceCopyOutput, 30);
-
-            if (result != S_OK)
-            {
-                LOG_ERROR("Dx12CommandQueue->Wait(dx12FenceTextureCopy, 30) : {0:x}!", result);
-                return false;
-            }
-        }
-        else
-        {
-            // wait for end of operation
-            if (dx12FenceCopyOutput->GetCompletedValue() < 30)
-            {
-                auto fenceEvent12 = CreateEvent(nullptr, FALSE, FALSE, nullptr);
-
-                if (fenceEvent12)
-                {
-                    result = dx12FenceCopyOutput->SetEventOnCompletion(30, fenceEvent12);
-
-                    if (result != S_OK)
-                    {
-                        LOG_ERROR("dx12FenceCopyOutput->SetEventOnCompletion(30, fenceEvent12) : {0:x}!", result);
-                        return false;
-                    }
-
-                    WaitForSingleObject(fenceEvent12, INFINITE);
-                    CloseHandle(fenceEvent12);
-                }
-            }
-
-        }
     }
-    // query	
-    else
-    {
-        if (queryCopyOutputFence == nullptr)
-        {
-            D3D11_QUERY_DESC pQueryDesc;
-            pQueryDesc.Query = D3D11_QUERY_EVENT;
-            pQueryDesc.MiscFlags = 0;
-
-
-            result = Dx11Device->CreateQuery(&pQueryDesc, &queryCopyOutputFence);
-
-            if (result != S_OK || !queryCopyOutputFence)
-            {
-                LOG_ERROR("can't create queryCopyOutputFence!");
-                return false;
-            }
-        }
-
-        Dx11DeviceContext->Begin(queryCopyOutputFence);
-
-        // copy back output
-        Dx11DeviceContext->CopyResource(paramOutput[_frameCount % 2], dx11Out.SharedTexture);
-
-        Dx11DeviceContext->End(queryCopyOutputFence);
-
-        // Execute dx11 commands 
-        Dx11DeviceContext->Flush();
-
-        // wait for completion
-        while (Dx11DeviceContext->GetData(queryCopyOutputFence, nullptr, 0, D3D11_ASYNC_GETDATA_DONOTFLUSH) == S_FALSE)
-            std::this_thread::yield();
-    }
-
-    ReleaseSyncResources();
 
     return true;
 }
 
-bool IFeature_Dx11wDx12::BaseInit(ID3D11Device* InDevice, ID3D11DeviceContext* InContext, NVSDK_NGX_Parameter* InParameters)
+bool IFeature_Dx11wDx12::BaseInit(ID3D11Device* InDevice, ID3D11DeviceContext* InContext,
+                                  NVSDK_NGX_Parameter* InParameters)
 {
     LOG_FUNC();
 
@@ -988,9 +860,6 @@ bool IFeature_Dx11wDx12::BaseInit(ID3D11Device* InDevice, ID3D11DeviceContext* I
         auto fl = Dx11Device->GetFeatureLevel();
         auto result = CreateDx12Device(fl);
 
-        //LOG_TRACE("sleeping after CreateDx12Device for 500ms");
-        //std::this_thread::sleep_for(std::chrono::milliseconds(500));
-
         if (result != S_OK || Dx12Device == nullptr)
         {
             LOG_ERROR("QueryInterface Dx12Device result: {0:x}", result);
@@ -1001,11 +870,45 @@ bool IFeature_Dx11wDx12::BaseInit(ID3D11Device* InDevice, ID3D11DeviceContext* I
     return true;
 }
 
-IFeature_Dx11wDx12::IFeature_Dx11wDx12(unsigned int InHandleId, NVSDK_NGX_Parameter* InParameters) : IFeature(InHandleId, InParameters), IFeature_Dx11(InHandleId, InParameters)
+IFeature_Dx11wDx12::IFeature_Dx11wDx12(unsigned int InHandleId, NVSDK_NGX_Parameter* InParameters)
+    : IFeature(InHandleId, InParameters), IFeature_Dx11(InHandleId, InParameters)
 {
 }
 
 IFeature_Dx11wDx12::~IFeature_Dx11wDx12()
 {
+    if (State::Instance().isShuttingDown)
+        return;
+
     ReleaseSharedResources();
+
+    if (Imgui != nullptr && Imgui.get() != nullptr)
+    {
+        Imgui.reset();
+        Imgui = nullptr;
+    }
+
+    if (DT != nullptr && DT.get() != nullptr)
+    {
+        DT.reset();
+        DT = nullptr;
+    }
+
+    if (OutputScaler != nullptr && OutputScaler.get() != nullptr)
+    {
+        OutputScaler.reset();
+        OutputScaler = nullptr;
+    }
+
+    if (RCAS != nullptr && RCAS.get() != nullptr)
+    {
+        RCAS.reset();
+        RCAS = nullptr;
+    }
+
+    if (Bias != nullptr && Bias.get() != nullptr)
+    {
+        Bias.reset();
+        Bias = nullptr;
+    }
 }
