@@ -89,7 +89,7 @@
 > * Pressing **`Page Up`** shows the performance stats overlay in the top left, and can be cycled between different modes with **`Page Down`** (_keybinds customisable in the overlay_).  
 > * If Opti overlay is instantly disappearing after trying Insert a few times, maybe try **`Alt + Insert`** ([reported workaround](https://github.com/optiscaler/OptiScaler/issues/484) for alternate keyboard layouts).
 
-![inputs_and_outputs](https://github.com/user-attachments/assets/ddc27ab3-7ce4-428e-93d7-cf52333ffa69)
+![inputs_and_outputs](https://github.com/user-attachments/assets/7ff37fd7-515f-488d-99ff-faa586e206fc)
 
 ## Which APIs and Upscalers are Supported?
 Currently **OptiScaler** can be used with DirectX 11, DirectX 12 and Vulkan, but each API has different sets of supported upscalers.  
@@ -126,7 +126,7 @@ Currently **OptiScaler** can be used with DirectX 11, DirectX 12 and Vulkan, but
 #### OptiFG + HUDfix (experimental HUD ghosting fix) 
 **OptiFG** was added with **v0.7** and is **only supported in DX12**. 
 It's an **experimental** way of adding FG to games without native Frame Generation, or can also be used as a last case scenario if the native FG is not working properly.  
-* Currently supports FSR3-FG (requires HUDfix to avoid HUD ghosting), XeFG and FSR4-FG (support HUD interpolation, so may or may not require HUDfix).
+* Currently supports FSR3-FG (requires HUDfix to avoid HUD ghosting), XeFG and FSR4-FG (ML model deals with the HUD, so may or may not require HUDfix).
 
 For more information on OptiFG and how to use it, please check the Wiki page - [OptiFG](https://github.com/optiscaler/OptiScaler/wiki/OptiFG).
 
@@ -142,15 +142,11 @@ For more information on OptiFG and how to use it, please check the Wiki page - [
 Please check [this](Config.md) document for configuration parameters and explanations. If your GPU is not an Nvidia one, check [GPU spoofing options](Spoofing.md) *(Will be updated)*
 
 ## Known Issues
-If you can't open the in-game menu overlay:
-1. Please check that you have installed OptiScaler in the correct folder (with the proper game exe)
-2. Check that you have enabled DLSS2+, XeSS or FSR2+ from game options and are in-game, not inside game settings
-3. If you are using **RTSS** (MSI Afterburner, CapFrameX), please enable this setting in RTSS and/or try updating RTSS _(also disable Reflex Markers injection)_. **When using OptiFG, please disable RTSS for best compatibility**.
- 
- ![image](https://github.com/optiscaler/OptiScaler/assets/35529761/8afb24ac-662a-40ae-a97c-837369e03fc7)
 
-Please check [this](Issues.md) document for the rest of the known issues and possible solutions for them.  
-Also check the community [Wiki](https://github.com/optiscaler/OptiScaler/wiki) for possible game issues and HUDfix incompatible games.
+> [!NOTE]
+> **For a list of known issues, please check the [**Wiki**](https://github.com/optiscaler/OptiScaler/wiki)**.
+> 
+> Also worth checking the [Compatibility List](https://github.com/optiscaler/OptiScaler/wiki/Compatibility-List) for possible game issues and their fixes.
 
 ## Compilation
 
