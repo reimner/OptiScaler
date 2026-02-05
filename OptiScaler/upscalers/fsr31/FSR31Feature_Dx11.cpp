@@ -453,9 +453,6 @@ bool FSR31FeatureDx11::Evaluate(ID3D11DeviceContext* DeviceContext, NVSDK_NGX_Pa
     if (InParameters->Get(NVSDK_NGX_Parameter_DLSS_Pre_Exposure, &params.preExposure) != NVSDK_NGX_Result_Success)
         params.preExposure = 1.0f;
 
-    params.upscaleSize.width = TargetWidth();
-    params.upscaleSize.height = TargetHeight();
-
     if (Version() >= feature_version { 3, 1, 1 } && _velocity != Config::Instance()->FsrVelocity.value_or_default())
     {
         _velocity = Config::Instance()->FsrVelocity.value_or_default();
@@ -473,12 +470,20 @@ bool FSR31FeatureDx11::Evaluate(ID3D11DeviceContext* DeviceContext, NVSDK_NGX_Pa
         params.upscaleSize.width *=
             static_cast<uint32_t>(Config::Instance()->OutputScalingMultiplier.value_or_default());
     }
+    else if (params.upscaleSize.width == 0)
+    {
+        params.upscaleSize.width = TargetWidth();
+    }
 
     if (InParameters->Get("FSR.upscaleSize.height", &params.upscaleSize.height) == NVSDK_NGX_Result_Success &&
         Config::Instance()->OutputScalingEnabled.value_or_default())
     {
         params.upscaleSize.height *=
             static_cast<uint32_t>(Config::Instance()->OutputScalingMultiplier.value_or_default());
+    }
+    else if (params.upscaleSize.height == 0)
+    {
+        params.upscaleSize.height = TargetHeight();
     }
 
     LOG_DEBUG("Dispatch!!");

@@ -747,12 +747,20 @@ bool FSR31FeatureVk::Evaluate(VkCommandBuffer InCmdBuffer, NVSDK_NGX_Parameter* 
         params.upscaleSize.width *=
             static_cast<uint32_t>(Config::Instance()->OutputScalingMultiplier.value_or_default());
     }
+    else if (params.upscaleSize.width == 0)
+    {
+        params.upscaleSize.width = TargetWidth();
+    }
 
     if (InParameters->Get("FSR.upscaleSize.height", &params.upscaleSize.height) == NVSDK_NGX_Result_Success &&
         Config::Instance()->OutputScalingEnabled.value_or_default())
     {
         params.upscaleSize.height *=
             static_cast<uint32_t>(Config::Instance()->OutputScalingMultiplier.value_or_default());
+    }
+    else if (params.upscaleSize.height == 0)
+    {
+        params.upscaleSize.height = TargetHeight();
     }
 
     LOG_DEBUG("Dispatch!!");

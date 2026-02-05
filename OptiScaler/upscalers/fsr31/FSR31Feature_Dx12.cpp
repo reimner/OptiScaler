@@ -434,9 +434,6 @@ bool FSR31FeatureDx12::Evaluate(ID3D12GraphicsCommandList* InCommandList, NVSDK_
         InParameters->Get("FSR.viewSpaceToMetersFactor", &params.viewSpaceToMetersFactor) != NVSDK_NGX_Result_Success)
         params.viewSpaceToMetersFactor = 0.0f;
 
-    params.upscaleSize.width = TargetWidth();
-    params.upscaleSize.height = TargetHeight();
-
     if (InParameters->Get(NVSDK_NGX_Parameter_DLSS_Pre_Exposure, &params.preExposure) != NVSDK_NGX_Result_Success)
         params.preExposure = 1.0f;
 
@@ -514,12 +511,20 @@ bool FSR31FeatureDx12::Evaluate(ID3D12GraphicsCommandList* InCommandList, NVSDK_
         params.upscaleSize.width *=
             static_cast<uint32_t>(Config::Instance()->OutputScalingMultiplier.value_or_default());
     }
+    else if (params.upscaleSize.width == 0)
+    {
+        params.upscaleSize.width = TargetWidth();
+    }
 
     if (InParameters->Get("FSR.upscaleSize.height", &params.upscaleSize.height) == NVSDK_NGX_Result_Success &&
         Config::Instance()->OutputScalingEnabled.value_or_default())
     {
         params.upscaleSize.height *=
             static_cast<uint32_t>(Config::Instance()->OutputScalingMultiplier.value_or_default());
+    }
+    else if (params.upscaleSize.height == 0)
+    {
+        params.upscaleSize.height = TargetHeight();
     }
 
     LOG_DEBUG("Dispatch!!");
