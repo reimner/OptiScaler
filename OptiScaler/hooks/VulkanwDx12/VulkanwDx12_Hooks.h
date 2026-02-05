@@ -21,6 +21,10 @@ class Vulkan_wDx12
     static void hk_vkFreeCommandBuffers(VkDevice device, VkCommandPool commandPool, uint32_t commandBufferCount,
                                         const VkCommandBuffer* pCommandBuffers);
     static VkResult hk_vkResetCommandPool(VkDevice device, VkCommandPool commandPool, VkCommandPoolResetFlags flags);
+    static VkResult hk_vkAllocateCommandBuffers(VkDevice device, const VkCommandBufferAllocateInfo* pAllocateInfo,
+                                                VkCommandBuffer* pCommandBuffers);
+    static void hk_vkDestroyCommandPool(VkDevice device, VkCommandPool commandPool,
+                                        const VkAllocationCallbacks* pAllocator);
 
     static void hk_vkCmdExecuteCommands(VkCommandBuffer commandBuffer, uint32_t commandBufferCount,
                                         const VkCommandBuffer* pCommandBuffers);

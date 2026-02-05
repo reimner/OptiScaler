@@ -16,7 +16,7 @@
 
 namespace vk_state
 {
-static constexpr uint32_t kMaxDescriptorSets = 8;
+static constexpr uint32_t kMaxDescriptorSets = 32; // Increased from 8 to support more pipelines (Vulkan spec minimum is 4, typical is 32)
 static constexpr uint32_t kMaxViewports = 16;
 static constexpr uint32_t kMaxScissors = 16;
 static constexpr uint32_t kMaxVertexBuffers = 32;      // Standard limit is often 32
@@ -29,9 +29,23 @@ enum class BindPointIndex : uint32_t
     Count
 };
 
-inline BindPointIndex ToIndex(VkPipelineBindPoint bp)
+inline std::optional<BindPointIndex> ToIndex(VkPipelineBindPoint bp)
 {
-    return (bp == VK_PIPELINE_BIND_POINT_COMPUTE) ? BindPointIndex::Compute : BindPointIndex::Graphics;
+    switch (bp)
+    {
+        case VK_PIPELINE_BIND_POINT_GRAPHICS:
+            return BindPointIndex::Graphics;
+        case VK_PIPELINE_BIND_POINT_COMPUTE:
+            return BindPointIndex::Compute;
+        case VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR:
+            // Ray tracing bind point - not tracked by this system
+            LOG_DEBUG("Ray tracing bind point not tracked by state tracker");
+            return std::nullopt;
+        default:
+            // Unknown bind point - don't track to avoid corrupting other state
+            LOG_WARN("Unknown pipeline bind point {} - ignoring to avoid state corruption", (uint32_t)bp);
+            return std::nullopt;
+    }
 }
 
 // Function table for replay
@@ -63,7 +77,17 @@ struct DescriptorBinding
     bool Bound = false;
     VkDescriptorSet Set = VK_NULL_HANDLE;
     VkPipelineLayout BoundWithLayout = VK_NULL_HANDLE; // Layout used when this set was bound
-    std::vector<uint32_t> DynamicOffsets;
+    uint32_t BindCallIndex = 0; // Index into DescriptorBindCalls that established this set
+};
+
+// NEW: Verbatim recording of vkCmdBindDescriptorSets calls
+struct DescriptorBindCall
+{
+    VkPipelineLayout Layout = VK_NULL_HANDLE;
+    uint32_t FirstSet = 0;
+    uint32_t DescriptorSetCount = 0;
+    std::vector<VkDescriptorSet> Sets; // Store sets dynamically to handle any valid count
+    std::vector<uint32_t> DynamicOffsets; // All dynamic offsets for this call
 };
 
 struct PushConstantEntry
@@ -78,18 +102,12 @@ struct PushConstantEntry
 struct BindPointState
 {
     VkPipeline Pipeline = VK_NULL_HANDLE;
-    VkPipelineLayout CurrentPipelineLayout = VK_NULL_HANDLE; // Last layout seen in BindDescriptorSets/Push
+    VkPipelineLayout CurrentPipelineLayout = VK_NULL_HANDLE; // Last layout seen in BindDescriptorSets
 
     std::array<DescriptorBinding, kMaxDescriptorSets> Sets {};
-
-    // Reserve capacity to avoid reallocations during recording
-    std::vector<PushConstantEntry> PushConstantHistory;
-
-    BindPointState()
-    {
-        // Most games use 1-4 push constant updates per frame
-        PushConstantHistory.reserve(8);
-    }
+    
+    // NEW: Timeline of descriptor bind calls
+    std::vector<DescriptorBindCall> DescriptorBindCalls;
 };
 
 struct DynamicState
@@ -149,6 +167,7 @@ struct CommandBufferState
     bool Recording = false;
     bool HasBegun = false;
     uint32_t BeginFlags = 0;
+    uint64_t BeginEpoch = 0; // Epoch when this command buffer was last begun
 
     std::unordered_map<VkImage, VkImageLayout> ImageLayouts;
 
@@ -160,12 +179,23 @@ struct CommandBufferState
     DynamicState Dyn {};
     VertexInputState VI {};
 
-    void ResetForNewRecording(uint32_t flags)
+    // Push constants are NOT per-bind-point state - they affect the command buffer globally
+    // Store them in timeline order to replay correctly in mixed compute/graphics sequences
+    std::vector<PushConstantEntry> PushConstantHistory;
+
+    CommandBufferState()
+    {
+        // Most games use 1-4 push constant updates per frame
+        PushConstantHistory.reserve(8);
+    }
+
+    void ResetForNewRecording(uint32_t flags, uint64_t epoch)
     {
         *this = CommandBufferState {};
         Recording = true;
         HasBegun = true;
         BeginFlags = flags;
+        BeginEpoch = epoch;
     }
 
     void ResetAll() { *this = CommandBufferState {}; }
@@ -176,6 +206,9 @@ struct ReplayParams
     bool ReplayGraphicsPipeline = true;
 
     // Bitmask of sets to replay (1 << setIndex)
+    // LIMITATION: 32-bit mask means only sets [0..31] can be requested for replay
+    // Sets >= 32 are recorded in DescriptorBindCalls but cannot be selectively replayed
+    // For graphics, this is typically sufficient as most pipelines use sets 0-3
     uint32_t RequiredGraphicsSetMask = 0x1;
 
     VkPipelineLayout OverrideGraphicsLayout = VK_NULL_HANDLE;
@@ -190,17 +223,77 @@ struct ReplayParams
 class CommandBufferStateTracker
 {
   public:
+    // Call this when command buffers are allocated from a pool
+    void OnAllocateCommandBuffers(VkCommandPool pool, uint32_t count, const VkCommandBuffer* pCommandBuffers)
+    {
+        std::scoped_lock lock(_mtx);
+        
+        // Initialize pool epoch ONLY if this is a truly new pool (not seen before)
+        // Don't overwrite existing epochs - OnResetPool may have already incremented it
+        if (_poolEpochs.find(pool) == _poolEpochs.end())
+        {
+            _poolEpochs[pool] = _globalEpochCounter;
+            LOG_DEBUG("Pool {:X} initialized with epoch {}", (size_t)pool, _globalEpochCounter);
+        }
+        
+        // Map each command buffer to its pool
+        for (uint32_t i = 0; i < count; ++i)
+        {
+            _cmdBufferToPool[pCommandBuffers[i]] = pool;
+        }
+        
+        LOG_DEBUG("Allocated {} command buffers from pool {:X} (current pool epoch: {})", 
+                  count, (size_t)pool, _poolEpochs[pool]);
+    }
+
     void OnBegin(VkCommandBuffer cmd, const VkCommandBufferBeginInfo* pBeginInfo)
     {
         const uint32_t flags = (pBeginInfo) ? pBeginInfo->flags : 0;
         std::scoped_lock lock(_mtx);
+
+        // Check if this command buffer is tracked in a pool
+        auto poolIt = _cmdBufferToPool.find(cmd);
+        if (poolIt == _cmdBufferToPool.end())
+        {
+            // Command buffer not mapped to any pool - allocation hook may have been missed
+            // We'll allow recording but log a warning since this affects epoch validation accuracy
+            LOG_WARN("Command buffer {:p} not tracked in any pool (allocation hook missed?). "
+                     "Recording will proceed but epoch validation will be disabled for safety.", (void*)cmd);
+            
+            // Create/reset state but mark with epoch 0 to signal "untrusted" status
+            auto& statePtr = _states[cmd];
+            if (!statePtr)
+                statePtr = std::make_shared<CommandBufferState>();
+
+            statePtr->ResetForNewRecording(flags, 0); // epoch 0 = untrusted/unvalidated
+            return;
+        }
+
+        // Get the current epoch for this command buffer's pool
+        VkCommandPool pool = poolIt->second;
+        auto epochIt = _poolEpochs.find(pool);
+        
+        uint64_t currentEpoch;
+        if (epochIt == _poolEpochs.end())
+        {
+            // Pool not in epoch map - should have been initialized during allocation
+            // Initialize it now with current global epoch
+            currentEpoch = _globalEpochCounter;
+            _poolEpochs[pool] = currentEpoch;
+            LOG_WARN("Pool {:X} had no epoch - initializing to {} during vkBeginCommandBuffer", 
+                     (size_t)pool, currentEpoch);
+        }
+        else
+        {
+            currentEpoch = epochIt->second;
+        }
 
         // Create new state or reset existing
         auto& statePtr = _states[cmd];
         if (!statePtr)
             statePtr = std::make_shared<CommandBufferState>();
 
-        statePtr->ResetForNewRecording(flags);
+        statePtr->ResetForNewRecording(flags, currentEpoch);
     }
 
     void OnEnd(VkCommandBuffer cmd)
@@ -219,33 +312,16 @@ class CommandBufferStateTracker
             it->second->ResetAll();
     }
 
-    // Generic pool reset handler
-    // template <typename PoolToCmdsFunc> void OnResetPool(VkCommandPool pool, PoolToCmdsFunc getCmdsForPool)
-    //{
-    //    std::scoped_lock lock(_mtx);
-    //    auto cmds = getCmdsForPool(pool);
-    //    for (auto c : cmds)
-    //    {
-    //        auto it = _states.find(c);
-    //        if (it != _states.end() && it->second)
-    //            it->second->ResetAll();
-    //    }
-    //}
-
-    // Remove the template version and add this simple version:
     void OnResetPool(VkCommandPool pool)
     {
+        // Invalidate only command buffers from this specific pool by incrementing its epoch
         std::scoped_lock lock(_mtx);
-
-        // Reset ALL tracked command buffers (less efficient but simpler)
-        // This works because resetting a pool implicitly resets all its command buffers
-        for (auto& [cmd, statePtr] : _states)
-        {
-            if (statePtr)
-                statePtr->ResetAll();
-        }
-
-        LOG_WARN("Pool {:X} reset - cleared ALL command buffer states (no pool tracking)", (size_t) pool);
+        
+        _globalEpochCounter++;
+        _poolEpochs[pool] = _globalEpochCounter;
+        
+        LOG_DEBUG("Pool {:X} reset - pool epoch set to {} - command buffers from THIS POOL invalidated until next vkBeginCommandBuffer", 
+                  (size_t)pool, _globalEpochCounter);
     }
 
     void OnBindPipeline(VkCommandBuffer cmd, VkPipelineBindPoint bindPoint, VkPipeline pipeline)
@@ -255,7 +331,11 @@ class CommandBufferStateTracker
         if (!statePtr)
             statePtr = std::make_shared<CommandBufferState>();
 
-        statePtr->BP[static_cast<uint32_t>(ToIndex(bindPoint))].Pipeline = pipeline;
+        auto idx = ToIndex(bindPoint);
+        if (!idx.has_value())
+            return; // Unsupported bind point - ignore
+
+        statePtr->BP[static_cast<uint32_t>(*idx)].Pipeline = pipeline;
     }
 
     void OnBindDescriptorSets(VkCommandBuffer cmd, VkPipelineBindPoint bindPoint, VkPipelineLayout layout,
@@ -267,30 +347,69 @@ class CommandBufferStateTracker
         if (!statePtr)
             statePtr = std::make_shared<CommandBufferState>();
 
-        auto& bp = statePtr->BP[static_cast<uint32_t>(ToIndex(bindPoint))];
+        auto idx = ToIndex(bindPoint);
+        if (!idx.has_value())
+            return; // Unsupported bind point - ignore
 
+        auto& bp = statePtr->BP[static_cast<uint32_t>(*idx)];
         bp.CurrentPipelineLayout = layout;
 
-        uint32_t dynOffsetIndex = 0;
+        // Record the bind call verbatim
+        DescriptorBindCall bindCall;
+        bindCall.Layout = layout;
+        bindCall.FirstSet = firstSet;
+        bindCall.DescriptorSetCount = descriptorSetCount;
+        
+        // Copy descriptor sets into vector - validate pointer is non-null when count > 0
+        if (descriptorSetCount > 0)
+        {
+            if (pDescriptorSets)
+            {
+                bindCall.Sets.assign(pDescriptorSets, pDescriptorSets + descriptorSetCount);
+            }
+            else
+            {
+                // Invalid: non-zero count but null pointer - log and don't record this bind
+                LOG_ERROR("vkCmdBindDescriptorSets called with descriptorSetCount={} but pDescriptorSets=nullptr", descriptorSetCount);
+                return;
+            }
+        }
+        else
+        {
+            bindCall.Sets.resize(descriptorSetCount, VK_NULL_HANDLE);
+        }
+        
+        // Copy dynamic offsets - validate pointer is non-null when count > 0
+        if (dynamicOffsetCount > 0)
+        {
+            if (pDynamicOffsets)
+            {
+                bindCall.DynamicOffsets.assign(pDynamicOffsets, pDynamicOffsets + dynamicOffsetCount);
+            }
+            else
+            {
+                // Invalid: non-zero count but null pointer - log and don't record this bind
+                LOG_ERROR("vkCmdBindDescriptorSets called with dynamicOffsetCount={} but pDynamicOffsets=nullptr", dynamicOffsetCount);
+                return;
+            }
+        }
+        // Note: zero count with non-null pointer is benign per Vulkan spec - pointer is ignored
+        
+        uint32_t bindCallIndex = static_cast<uint32_t>(bp.DescriptorBindCalls.size());
+        bp.DescriptorBindCalls.push_back(std::move(bindCall));
 
+        // Update per-set tracking for quick queries
         for (uint32_t i = 0; i < descriptorSetCount; ++i)
         {
             uint32_t setIdx = firstSet + i;
             if (setIdx >= kMaxDescriptorSets)
                 continue;
 
-            bp.Sets[setIdx].Bound = true;
-            bp.Sets[setIdx].Set = pDescriptorSets ? pDescriptorSets[i] : VK_NULL_HANDLE;
-            bp.Sets[setIdx].BoundWithLayout = layout;
-            bp.Sets[setIdx].DynamicOffsets.clear();
-
-            if (pDynamicOffsets && dynOffsetIndex < dynamicOffsetCount)
-            {
-                if (descriptorSetCount == 1)
-                {
-                    bp.Sets[setIdx].DynamicOffsets.assign(pDynamicOffsets, pDynamicOffsets + dynamicOffsetCount);
-                }
-            }
+            auto& binding = bp.Sets[setIdx];
+            binding.Bound = true;
+            binding.Set = pDescriptorSets[i]; // Safe now - we validated pDescriptorSets above
+            binding.BoundWithLayout = layout;
+            binding.BindCallIndex = bindCallIndex;
         }
     }
 
@@ -302,38 +421,52 @@ class CommandBufferStateTracker
         if (!statePtr)
             statePtr = std::make_shared<CommandBufferState>();
 
-        auto& bp = statePtr->BP[static_cast<uint32_t>(ToIndex(bindPoint))]; // Use bindPoint parameter
+        auto idx = ToIndex(bindPoint);
+        if (!idx.has_value())
+            return; // Unsupported bind point - ignore
 
+        // Update the current layout for this bind point (for descriptor set tracking)
+        auto& bp = statePtr->BP[static_cast<uint32_t>(*idx)];
         bp.CurrentPipelineLayout = layout;
 
-        // Create new entry for this push constant update
+        // Store push constant in global timeline (NOT per-bind-point)
+        // Push constants affect the command buffer state globally, keyed by (layout, stages, range)
         PushConstantEntry entry;
         entry.Layout = layout;
         entry.Stages = stageFlags;
         entry.Offset = offset;
         entry.Size = size;
 
-        // Copy data into the entry
-        if (size > 0 && offset + size <= kMaxPushConstantBytes)
+        // Copy data to Data[0..size) - the offset is only used during replay
+        // Defensive: check pValues is non-null when size > 0
+        if (size > 0 && pValues && size <= kMaxPushConstantBytes)
         {
-            std::memcpy(&entry.Data[offset], pValues, size);
+            std::memcpy(&entry.Data[0], pValues, size);
         }
-        else if (offset + size > kMaxPushConstantBytes)
+        else if (size > kMaxPushConstantBytes && pValues)
         {
             // Clamp to maximum size
-            uint32_t clampedSize = kMaxPushConstantBytes - offset;
-            if (clampedSize > 0)
-            {
-                std::memcpy(&entry.Data[offset], pValues, clampedSize);
-                entry.Size = clampedSize;
-            }
+            std::memcpy(&entry.Data[0], pValues, kMaxPushConstantBytes);
+            entry.Size = kMaxPushConstantBytes;
+        }
+        else if (size > 0 && !pValues)
+        {
+            LOG_ERROR("vkCmdPushConstants called with size={} but pValues=nullptr", size);
+            return; // Don't store invalid entry
         }
 
-        bp.PushConstantHistory.push_back(entry);
+        statePtr->PushConstantHistory.push_back(entry);
     }
 
     void OnSetViewport(VkCommandBuffer cmd, uint32_t first, uint32_t count, const VkViewport* pViewports)
     {
+        // Defensive: validate pointer when count > 0
+        if (count > 0 && !pViewports)
+        {
+            LOG_ERROR("vkCmdSetViewport called with count={} but pViewports=nullptr", count);
+            return;
+        }
+
         std::scoped_lock lock(_mtx);
         auto& statePtr = _states[cmd];
         if (!statePtr)
@@ -352,6 +485,13 @@ class CommandBufferStateTracker
 
     void OnSetScissor(VkCommandBuffer cmd, uint32_t first, uint32_t count, const VkRect2D* pScissors)
     {
+        // Defensive: validate pointer when count > 0
+        if (count > 0 && !pScissors)
+        {
+            LOG_ERROR("vkCmdSetScissor called with count={} but pScissors=nullptr", count);
+            return;
+        }
+
         std::scoped_lock lock(_mtx);
         auto& statePtr = _states[cmd];
         if (!statePtr)
@@ -371,6 +511,14 @@ class CommandBufferStateTracker
     void OnBindVertexBuffers(VkCommandBuffer cmd, uint32_t first, uint32_t count, const VkBuffer* pBuffers,
                              const VkDeviceSize* pOffsets)
     {
+        // Defensive: validate pointers when count > 0
+        if (count > 0 && (!pBuffers || !pOffsets))
+        {
+            LOG_ERROR("vkCmdBindVertexBuffers called with count={} but pBuffers={} or pOffsets={}",
+                      count, (void*)pBuffers, (void*)pOffsets);
+            return;
+        }
+
         std::scoped_lock lock(_mtx);
         auto& statePtr = _states[cmd];
         if (!statePtr)
@@ -559,7 +707,33 @@ class CommandBufferStateTracker
         for (uint32_t i = 0; i < count; ++i)
         {
             _states.erase(pCommandBuffers[i]);
+            _cmdBufferToPool.erase(pCommandBuffers[i]);
         }
+        
+        LOG_DEBUG("Freed {} command buffers from pool {:X}", count, (size_t)pool);
+    }
+
+    // Call this when a command pool is destroyed
+    void OnDestroyPool(VkCommandPool pool)
+    {
+        std::scoped_lock lock(_mtx);
+        
+        // Remove all command buffers allocated from this pool
+        for (auto it = _cmdBufferToPool.begin(); it != _cmdBufferToPool.end();)
+        {
+            if (it->second == pool)
+            {
+                _states.erase(it->first);
+                it = _cmdBufferToPool.erase(it);
+            }
+            else
+            {
+                ++it;
+            }
+        }
+        
+        _poolEpochs.erase(pool);
+        LOG_DEBUG("Pool {:X} destroyed - removed all associated command buffers", (size_t)pool);
     }
 
     bool CaptureAndReplay(VkCommandBuffer srcCmd, VkCommandBuffer dstCmd, const ReplayParams& params) const
@@ -576,60 +750,61 @@ class CommandBufferStateTracker
     bool ReplayForGraphicsDraw(const VulkanCmdFns& fns, VkCommandBuffer srcCmd, VkCommandBuffer dstCmd,
                                const ReplayParams& params) const
     {
-        std::shared_ptr<CommandBufferState> snapshot;
-        if (!TryGetSnapshot(srcCmd, snapshot) || !snapshot)
+        CommandBufferState snapshot;
+        if (!TryGetSnapshot(srcCmd, snapshot))
+        {
+            LOG_WARN("Failed to get snapshot for command buffer {:p} - may have been invalidated by pool reset", (void*)srcCmd);
             return false;
+        }
 
         // 1. Pipeline
         if (params.ReplayGraphicsPipeline)
         {
-            auto& gfx = snapshot->BP[static_cast<uint32_t>(BindPointIndex::Graphics)];
+            auto& gfx = snapshot.BP[static_cast<uint32_t>(BindPointIndex::Graphics)];
             if (gfx.Pipeline && fns.CmdBindPipeline)
                 fns.CmdBindPipeline(dstCmd, VK_PIPELINE_BIND_POINT_GRAPHICS, gfx.Pipeline);
         }
 
-        // 2. Descriptor Sets
+        // 2. Descriptor Sets - use unified helper with slicing
         {
-            auto& gfx = snapshot->BP[static_cast<uint32_t>(BindPointIndex::Graphics)];
-
-            if (fns.CmdBindDescriptorSets)
-            {
-                for (uint32_t i = 0; i < kMaxDescriptorSets; ++i)
-                {
-                    if (!((params.RequiredGraphicsSetMask >> i) & 1))
-                        continue;
-
-                    const auto& sb = gfx.Sets[i];
-                    if (!sb.Bound || sb.Set == VK_NULL_HANDLE)
-                        continue;
-
-                    // Use override layout if explicitly provided, otherwise use the original layout
-                    // that the descriptor set was bound with to ensure layout compatibility
-                    VkPipelineLayout layoutToUse =
-                        params.OverrideGraphicsLayout ? params.OverrideGraphicsLayout : sb.BoundWithLayout;
-                    if (!layoutToUse)
-                        continue;
-
-                    fns.CmdBindDescriptorSets(dstCmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layoutToUse, i, 1, &sb.Set,
-                                              (uint32_t) sb.DynamicOffsets.size(), sb.DynamicOffsets.data());
-                }
-            }
+            auto& gfx = snapshot.BP[static_cast<uint32_t>(BindPointIndex::Graphics)];
+            ReplayDescriptorSets(fns, dstCmd, gfx, VK_PIPELINE_BIND_POINT_GRAPHICS, 
+                                params.RequiredGraphicsSetMask, params.OverrideGraphicsLayout);
         }
 
         // 3. Push Constants
         if (params.ReplayPushConstants)
         {
-            auto& gfx = snapshot->BP[static_cast<uint32_t>(BindPointIndex::Graphics)];
-
-            for (const auto& entry : gfx.PushConstantHistory)
+            // Replay push constants from global timeline in order
+            // Filter by stage mask compatibility (optional) and layout compatibility
+            constexpr VkShaderStageFlags graphicsStages = 
+                VK_SHADER_STAGE_VERTEX_BIT | 
+                VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT |
+                VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT |
+                VK_SHADER_STAGE_GEOMETRY_BIT |
+                VK_SHADER_STAGE_FRAGMENT_BIT |
+                VK_SHADER_STAGE_TASK_BIT_EXT |
+                VK_SHADER_STAGE_MESH_BIT_EXT;
+            
+            for (const auto& entry : snapshot.PushConstantHistory)
             {
+                // Optional: filter to graphics-relevant stages (conservative - keeps ALL_GRAPHICS too)
+                // Skip only if exclusively compute/ray-tracing stages
+                bool hasGraphicsStages = (entry.Stages & graphicsStages) != 0;
+                bool hasAllGraphics = (entry.Stages & VK_SHADER_STAGE_ALL_GRAPHICS) != 0;
+                
+                if (!hasGraphicsStages && !hasAllGraphics)
+                {
+                    // This is exclusively compute or ray tracing - skip for graphics replay
+                    continue;
+                }
+
                 VkPipelineLayout layoutToUse =
                     params.OverrideGraphicsLayout ? params.OverrideGraphicsLayout : entry.Layout;
 
                 if (layoutToUse && entry.Size > 0 && fns.CmdPushConstants)
                 {
-                    fns.CmdPushConstants(dstCmd, layoutToUse, entry.Stages, entry.Offset, entry.Size,
-                                         &entry.Data[entry.Offset]);
+                    fns.CmdPushConstants(dstCmd, layoutToUse, entry.Stages, entry.Offset, entry.Size, &entry.Data[0]);
                 }
             }
         }
@@ -637,24 +812,23 @@ class CommandBufferStateTracker
         // 4. Dynamic State
         if (params.ReplayViewportScissor)
         {
-            ReplayViewports(fns, dstCmd, snapshot->Dyn);
-            ReplayScissors(fns, dstCmd, snapshot->Dyn);
+            ReplayViewports(fns, dstCmd, snapshot.Dyn);
+            ReplayScissors(fns, dstCmd, snapshot.Dyn);
         }
 
         // 4.5. Extended Dynamic State
         if (params.ReplayExtendedDynamicState)
         {
-            ReplayExtendedDynamicState(fns, dstCmd, snapshot->Dyn);
+            ReplayExtendedDynamicState(fns, dstCmd, snapshot.Dyn);
         }
 
         // 5. Vertex/Index
         if (params.ReplayVertexIndex)
         {
-            ReplayVertexBuffers(fns, dstCmd, snapshot->VI);
-            if (snapshot->VI.IndexBufferValid && fns.CmdBindIndexBuffer)
+            ReplayVertexBuffers(fns, dstCmd, snapshot.VI);
+            if (snapshot.VI.IndexBufferValid && fns.CmdBindIndexBuffer)
             {
-                fns.CmdBindIndexBuffer(dstCmd, snapshot->VI.IndexBuffer, snapshot->VI.IndexOffset,
-                                       snapshot->VI.IndexType);
+                fns.CmdBindIndexBuffer(dstCmd, snapshot.VI.IndexBuffer, snapshot.VI.IndexOffset, snapshot.VI.IndexType);
             }
         }
 
@@ -668,6 +842,224 @@ class CommandBufferStateTracker
     }
 
   private:
+    // Helper method to replay descriptor sets with proper slicing and timeline ordering
+    void ReplayDescriptorSets(const VulkanCmdFns& fns, VkCommandBuffer dstCmd, 
+                              const BindPointState& bindPoint, VkPipelineBindPoint bindPointType,
+                              uint32_t requiredSetMask, VkPipelineLayout overrideLayout) const
+    {
+        if (!fns.CmdBindDescriptorSets)
+            return;
+
+        // Track which bind calls contain at least one required set - use dynamic container to handle any number of calls
+        const size_t numCalls = bindPoint.DescriptorBindCalls.size();
+        if (numCalls == 0)
+            return;
+        
+        std::vector<bool> callsNeeded(numCalls, false);
+        
+        // Pre-compute and cache range end for each call to avoid redundant overflow checks
+        std::vector<uint32_t> callEnds(numCalls);
+        std::vector<bool> callRangeValid(numCalls, false);
+        
+        for (size_t callIdx = 0; callIdx < numCalls; ++callIdx)
+        {
+            const auto& call = bindPoint.DescriptorBindCalls[callIdx];
+            const uint64_t callEnd64 = (uint64_t)call.FirstSet + call.DescriptorSetCount;
+            
+            // Validate range with overflow check
+            if (call.DescriptorSetCount > 0)
+            {
+                if (callEnd64 > (uint64_t)UINT32_MAX + 1ull || (uint32_t)callEnd64 < call.FirstSet)
+                {
+                    LOG_ERROR("Descriptor set call {} range overflow (firstSet={}, count={}) - skipping",
+                             callIdx, call.FirstSet, call.DescriptorSetCount);
+                    continue;
+                }
+            }
+            
+            callEnds[callIdx] = (uint32_t)callEnd64;
+            callRangeValid[callIdx] = true;
+        }
+        
+        // First pass: identify which calls contain any required set
+        for (uint32_t setIdx = 0; setIdx < kMaxDescriptorSets; ++setIdx)
+        {
+            if (!((requiredSetMask >> setIdx) & 1))
+                continue;
+
+            const auto& binding = bindPoint.Sets[setIdx];
+            if (!binding.Bound || binding.Set == VK_NULL_HANDLE)
+                continue;
+
+            uint32_t callIdx = binding.BindCallIndex;
+            if (callIdx >= numCalls)
+            {
+                LOG_WARN("Set {} references bind call {} but only {} calls exist - skipping", 
+                         setIdx, callIdx, numCalls);
+                continue;
+            }
+            
+            if (!callRangeValid[callIdx])
+                continue; // Already logged error during range validation
+            
+            // Validate that this set actually belongs to this call's range
+            const auto& call = bindPoint.DescriptorBindCalls[callIdx];
+            uint32_t callEnd = callEnds[callIdx];
+            
+            if (setIdx < call.FirstSet || setIdx >= callEnd)
+            {
+                // Only warn if count > 0 (avoid underflow in log message)
+                if (call.DescriptorSetCount > 0)
+                {
+                    LOG_WARN("Set {} tracked with call {} but outside call range [{}..{}] - skipping",
+                             setIdx, callIdx, call.FirstSet, callEnd - 1);
+                }
+                continue;
+            }
+            
+            // Mark this call as needed
+            callsNeeded[callIdx] = true;
+        }
+        
+        // Second pass: replay needed calls in timeline order
+        for (uint32_t callIdx = 0; callIdx < numCalls; ++callIdx)
+        {
+            if (!callsNeeded[callIdx] || !callRangeValid[callIdx])
+                continue;
+            
+            const auto& call = bindPoint.DescriptorBindCalls[callIdx];
+            uint32_t callEnd = callEnds[callIdx]; // Use cached value
+            
+            VkPipelineLayout layoutToUse = overrideLayout ? overrideLayout : call.Layout;
+            
+            if (!layoutToUse)
+                continue;
+            
+            // Validate consistency between DescriptorSetCount and Sets.size()
+            if (call.DescriptorSetCount > call.Sets.size())
+            {
+                LOG_ERROR("Descriptor set call {} has count={} but Sets.size()={} - skipping to avoid driver crash",
+                         callIdx, call.DescriptorSetCount, call.Sets.size());
+                continue;
+            }
+            
+            // CRITICAL: If this call has dynamic offsets, we MUST replay it verbatim (no slicing)
+            // Dynamic offsets are paired with descriptor sets in a complex way that requires
+            // pipeline layout introspection to understand - without that, slicing is unsafe
+            if (!call.DynamicOffsets.empty())
+            {
+                // Additional safety check for verbatim replay path
+                const VkDescriptorSet* pSetsToUse = (call.DescriptorSetCount > 0) ? call.Sets.data() : nullptr;
+                
+                // Replay the entire original call verbatim
+                fns.CmdBindDescriptorSets(
+                    dstCmd,
+                    bindPointType,
+                    layoutToUse,
+                    call.FirstSet,
+                    call.DescriptorSetCount,
+                    pSetsToUse,
+                    (uint32_t)call.DynamicOffsets.size(),
+                    call.DynamicOffsets.data()
+                );
+                
+                LOG_DEBUG("Replayed descriptor set call {} verbatim (has {} dynamic offsets, firstSet={}, count={})",
+                         callIdx, call.DynamicOffsets.size(), call.FirstSet, call.DescriptorSetCount);
+                continue;
+            }
+            
+            // No dynamic offsets - safe to slice to only the required sets
+            // Build list of which sets from this call are actually required
+            std::vector<uint32_t> requiredSetIndices; // Absolute set indices
+            
+            for (uint32_t setIdx = 0; setIdx < kMaxDescriptorSets; ++setIdx)
+            {
+                if (!((requiredSetMask >> setIdx) & 1))
+                    continue;
+                
+                const auto& binding = bindPoint.Sets[setIdx];
+                if (!binding.Bound || binding.Set == VK_NULL_HANDLE)
+                    continue;
+                
+                if (binding.BindCallIndex != callIdx)
+                    continue;
+                
+                // Validate set is within call range (using pre-computed safe callEnd)
+                if (setIdx >= call.FirstSet && setIdx < callEnd)
+                {
+                    requiredSetIndices.push_back(setIdx);
+                }
+            }
+            
+            if (requiredSetIndices.empty())
+                continue;
+            
+            // requiredSetIndices should already be sorted (we iterate setIdx in order)
+            // but sort anyway for robustness
+            std::sort(requiredSetIndices.begin(), requiredSetIndices.end());
+            
+            // Group into contiguous ranges for efficient binding
+            for (size_t i = 0; i < requiredSetIndices.size(); )
+            {
+                uint32_t rangeStart = requiredSetIndices[i];
+                uint32_t rangeEnd = rangeStart;
+                
+                // Find end of contiguous range
+                while (i + 1 < requiredSetIndices.size() && requiredSetIndices[i + 1] == rangeEnd + 1)
+                {
+                    rangeEnd = requiredSetIndices[++i];
+                }
+                i++;
+                
+                uint32_t rangeCount = rangeEnd - rangeStart + 1;
+                
+                // Extract sets for this range from the original call
+                std::vector<VkDescriptorSet> setsToRebind;
+                setsToRebind.reserve(rangeCount);
+                
+                // Convert absolute indices to call-relative indices and extract sets
+                bool allValid = true;
+                for (uint32_t absoluteSetIdx = rangeStart; absoluteSetIdx <= rangeEnd; ++absoluteSetIdx)
+                {
+                    if (absoluteSetIdx < call.FirstSet || absoluteSetIdx >= callEnd)
+                    {
+                        LOG_ERROR("Set {} outside call range [{}, {}) - internal error",
+                                  absoluteSetIdx, call.FirstSet, callEnd);
+                        allValid = false;
+                        break;
+                    }
+                    
+                    uint32_t setIndexInCall = absoluteSetIdx - call.FirstSet;
+                    
+                    if (setIndexInCall >= call.Sets.size())
+                    {
+                        LOG_ERROR("Set index {} maps to out-of-bounds call array index {} (size {})",
+                                  absoluteSetIdx, setIndexInCall, call.Sets.size());
+                        allValid = false;
+                        break;
+                    }
+                    
+                    setsToRebind.push_back(call.Sets[setIndexInCall]);
+                }
+                
+                // Replay this contiguous range if all sets were valid
+                if (allValid && !setsToRebind.empty())
+                {
+                    fns.CmdBindDescriptorSets(
+                        dstCmd,
+                        bindPointType,
+                        layoutToUse,
+                        rangeStart,
+                        (uint32_t)setsToRebind.size(),
+                        setsToRebind.data(),
+                        0,
+                        nullptr
+                    );
+                }
+            }
+        }
+    }
+
     void ReplayVertexBuffers(const VulkanCmdFns& fns, VkCommandBuffer dst, const VertexInputState& vi) const
     {
         if (!fns.CmdBindVertexBuffers)
@@ -780,13 +1172,48 @@ class CommandBufferStateTracker
         }
     }
 
-    bool TryGetSnapshot(VkCommandBuffer cmd, std::shared_ptr<CommandBufferState>& out) const
+    bool TryGetSnapshot(VkCommandBuffer cmd, CommandBufferState& out) const
     {
         std::scoped_lock lock(_mtx);
         auto it = _states.find(cmd);
-        if (it == _states.end())
+        if (it == _states.end() || !it->second)
             return false;
-        out = it->second;
+
+        // Check if this command buffer is tracked in a pool
+        auto poolIt = _cmdBufferToPool.find(cmd);
+        if (poolIt == _cmdBufferToPool.end())
+        {
+            // Command buffer not mapped to any pool - allocation hook may have been missed
+            // This is potentially unsafe as we can't validate against pool-specific epochs
+            LOG_WARN("Command buffer {:p} not tracked in any pool (allocation hook missed?). "
+                     "Cannot validate epoch - refusing replay for safety.", (void*)cmd);
+            return false;
+        }
+
+        // Get the current epoch for this command buffer's pool
+        VkCommandPool pool = poolIt->second;
+        auto epochIt = _poolEpochs.find(pool);
+        if (epochIt == _poolEpochs.end())
+        {
+            // Pool exists in mapping but has no epoch - should not happen if properly initialized
+            LOG_ERROR("Pool {:X} for command buffer {:p} has no epoch entry. Internal state corruption?",
+                      (size_t)pool, (void*)cmd);
+            return false;
+        }
+
+        uint64_t currentPoolEpoch = epochIt->second;
+
+        // Check if this command buffer's state is stale (invalidated by its pool's reset)
+        if (it->second->BeginEpoch < currentPoolEpoch)
+        {
+            LOG_WARN("Command buffer {:p} has stale state (epoch {} < pool {:X} epoch {}), refusing replay. "
+                     "This command buffer was invalidated by vkResetCommandPool and must not be used until vkBeginCommandBuffer is called.",
+                     (void*)cmd, it->second->BeginEpoch, (size_t)pool, currentPoolEpoch);
+            return false;
+        }
+
+        // Deep copy the state under lock - this is now a true immutable snapshot
+        out = *it->second;
         return true;
     }
 
@@ -795,9 +1222,9 @@ class CommandBufferStateTracker
     bool CaptureAndReplay(VkCommandBuffer srcCmd, VkCommandBuffer dstCmd, const VulkanCmdFns& fns,
                           const ReplayParams& params) const
     {
-        std::shared_ptr<CommandBufferState> snapshot;
+        CommandBufferState snapshot;
 
-        // Capture state from source command buffer (fast pointer copy under lock)
+        // Capture state from source command buffer (deep copy under lock)
         {
             std::scoped_lock lock(_mtx);
 
@@ -809,32 +1236,60 @@ class CommandBufferStateTracker
                 return false;
             }
 
-            snapshot = it->second;
+            if (!it->second)
+            {
+                LOG_WARN("Captured state is empty for command buffer {:p}", (void*) srcCmd);
+                return false;
+            }
+
+            // Check if this command buffer is tracked in a pool
+            auto poolIt = _cmdBufferToPool.find(srcCmd);
+            if (poolIt == _cmdBufferToPool.end())
+            {
+                // Command buffer not mapped to any pool - allocation hook may have been missed
+                // This is potentially unsafe as we can't validate against pool-specific epochs
+                LOG_WARN("Command buffer {:p} not tracked in any pool (allocation hook missed?). "
+                         "Cannot validate epoch - refusing replay for safety.", (void*)srcCmd);
+                return false;
+            }
+
+            // Get the current epoch for this command buffer's pool
+            VkCommandPool pool = poolIt->second;
+            auto epochIt = _poolEpochs.find(pool);
+            if (epochIt == _poolEpochs.end())
+            {
+                // Pool exists in mapping but has no epoch - should not happen if properly initialized
+                LOG_ERROR("Pool {:X} for command buffer {:p} has no epoch entry. Internal state corruption?",
+                          (size_t)pool, (void*)srcCmd);
+                return false;
+            }
+
+            uint64_t currentPoolEpoch = epochIt->second;
+
+            // Check if this command buffer's state is stale (invalidated by pool reset)
+            if (it->second->BeginEpoch < currentPoolEpoch)
+            {
+                LOG_WARN("Command buffer {:p} has stale state (epoch {} < pool {:X} epoch {}), refusing replay. "
+                         "This command buffer was invalidated by vkResetCommandPool and must not be used until vkBeginCommandBuffer is called.",
+                         (void*)srcCmd, it->second->BeginEpoch, (size_t)pool, currentPoolEpoch);
+                return false;
+            }
+
+            // Deep copy the state - now a true immutable snapshot
+            snapshot = *it->second;
         }
 
-        if (!snapshot)
-        {
-            LOG_WARN("Captured state is empty for command buffer {:p}", (void*) srcCmd);
-            return false;
-        }
-
-        // Replay to destination (no lock needed - reading from immutable snapshot)
+        // Replay to destination (no lock needed - working with copied snapshot)
         return ReplayFromSnapshot(fns, snapshot, dstCmd, params);
     }
 
-    bool ReplayFromSnapshot(const VulkanCmdFns& fns, std::shared_ptr<CommandBufferState> snapshot,
-                            VkCommandBuffer dstCmd, const ReplayParams& params) const
+    bool ReplayFromSnapshot(const VulkanCmdFns& fns, const CommandBufferState& snapshot, VkCommandBuffer dstCmd,
+                            const ReplayParams& params) const
     {
-        if (!snapshot)
-        {
-            LOG_WARN("Snapshot is null for command buffer {:p}", (void*) dstCmd);
-            return false;
-        }
-
         // 1. Graphics Pipeline
         if (params.ReplayGraphicsPipeline)
         {
-            auto& gfx = snapshot->BP[static_cast<uint32_t>(BindPointIndex::Graphics)];
+            auto& gfx = snapshot.BP[static_cast<uint32_t>(BindPointIndex::Graphics)];
             if (gfx.Pipeline && fns.CmdBindPipeline)
                 fns.CmdBindPipeline(dstCmd, VK_PIPELINE_BIND_POINT_GRAPHICS, gfx.Pipeline);
         }
@@ -842,58 +1297,70 @@ class CommandBufferStateTracker
         // 1.5. Compute Pipeline (if requested)
         if (params.ReplayComputeToo)
         {
-            auto& comp = snapshot->BP[static_cast<uint32_t>(BindPointIndex::Compute)];
+            auto& comp = snapshot.BP[static_cast<uint32_t>(BindPointIndex::Compute)];
             if (comp.Pipeline && fns.CmdBindPipeline)
                 fns.CmdBindPipeline(dstCmd, VK_PIPELINE_BIND_POINT_COMPUTE, comp.Pipeline);
         }
 
         // 2. Descriptor Sets - Graphics
         {
-            auto& gfx = snapshot->BP[static_cast<uint32_t>(BindPointIndex::Graphics)];
-
-            if (fns.CmdBindDescriptorSets)
-            {
-                for (uint32_t i = 0; i < kMaxDescriptorSets; ++i)
-                {
-                    if (!((params.RequiredGraphicsSetMask >> i) & 1))
-                        continue;
-
-                    const auto& sb = gfx.Sets[i];
-                    if (!sb.Bound || sb.Set == VK_NULL_HANDLE)
-                        continue;
-
-                    // Use override layout if explicitly provided, otherwise use the original layout
-                    // that the descriptor set was bound with to ensure layout compatibility
-                    VkPipelineLayout layoutToUse =
-                        params.OverrideGraphicsLayout ? params.OverrideGraphicsLayout : sb.BoundWithLayout;
-                    if (!layoutToUse)
-                        continue;
-
-                    fns.CmdBindDescriptorSets(dstCmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layoutToUse, i, 1, &sb.Set,
-                                              (uint32_t) sb.DynamicOffsets.size(), sb.DynamicOffsets.data());
-                }
-            }
+            auto& gfx = snapshot.BP[static_cast<uint32_t>(BindPointIndex::Graphics)];
+            ReplayDescriptorSets(fns, dstCmd, gfx, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                params.RequiredGraphicsSetMask, params.OverrideGraphicsLayout);
         }
 
         // 2.5. Descriptor Sets - Compute (if requested)
         if (params.ReplayComputeToo)
         {
-            auto& comp = snapshot->BP[static_cast<uint32_t>(BindPointIndex::Compute)];
-
+            auto& comp = snapshot.BP[static_cast<uint32_t>(BindPointIndex::Compute)];
+            
+            // For compute, replay all descriptor bind calls verbatim in timeline order
+            // This avoids the kMaxDescriptorSets limitation and ensures correctness
             if (fns.CmdBindDescriptorSets)
             {
-                for (uint32_t i = 0; i < kMaxDescriptorSets; ++i)
+                for (const auto& call : comp.DescriptorBindCalls)
                 {
-                    const auto& sb = comp.Sets[i];
-                    if (!sb.Bound || sb.Set == VK_NULL_HANDLE)
+                    if (!call.Layout || call.DescriptorSetCount == 0)
                         continue;
-
-                    VkPipelineLayout layoutToUse = sb.BoundWithLayout;
-                    if (!layoutToUse)
+                    
+                    // Validate consistency before replay
+                    if (call.DescriptorSetCount > call.Sets.size())
+                    {
+                        LOG_ERROR("Compute descriptor set call has count={} but Sets.size()={} - skipping",
+                                 call.DescriptorSetCount, call.Sets.size());
                         continue;
-
-                    fns.CmdBindDescriptorSets(dstCmd, VK_PIPELINE_BIND_POINT_COMPUTE, layoutToUse, i, 1, &sb.Set,
-                                              (uint32_t) sb.DynamicOffsets.size(), sb.DynamicOffsets.data());
+                    }
+                    
+                    // Sanity check: validate dynamic offset data consistency
+                    if (!call.DynamicOffsets.empty() && call.DescriptorSetCount == 0)
+                    {
+                        LOG_WARN("Compute bind call has {} dynamic offsets but zero sets (firstSet={}) - possible corruption, skipping",
+                                 call.DynamicOffsets.size(), call.FirstSet);
+                        continue;
+                    }
+                    
+                    // Additional safety: cap dynamic offset count to avoid pathological driver behavior
+                    constexpr uint32_t kMaxSaneDynamicOffsets = 1024; // Generous upper bound
+                    if (call.DynamicOffsets.size() > kMaxSaneDynamicOffsets)
+                    {
+                        LOG_ERROR("Compute bind call has {} dynamic offsets (exceeds sanity limit of {}) - possible corruption, skipping",
+                                 call.DynamicOffsets.size(), kMaxSaneDynamicOffsets);
+                        continue;
+                    }
+                    
+                    const VkDescriptorSet* pSets = call.Sets.data();
+                    const uint32_t* pDynamicOffsets = call.DynamicOffsets.empty() ? nullptr : call.DynamicOffsets.data();
+                    
+                    fns.CmdBindDescriptorSets(
+                        dstCmd,
+                        VK_PIPELINE_BIND_POINT_COMPUTE,
+                        call.Layout,
+                        call.FirstSet,
+                        call.DescriptorSetCount,
+                        pSets,
+                        (uint32_t)call.DynamicOffsets.size(),
+                        pDynamicOffsets
+                    );
                 }
             }
         }
@@ -901,17 +1368,36 @@ class CommandBufferStateTracker
         // 3. Push Constants - Graphics
         if (params.ReplayPushConstants)
         {
-            auto& gfx = snapshot->BP[static_cast<uint32_t>(BindPointIndex::Graphics)];
-
-            for (const auto& entry : gfx.PushConstantHistory)
+            // Replay push constants from global timeline in order
+            // Filter by stage mask compatibility (optional) and layout compatibility
+            constexpr VkShaderStageFlags graphicsStages = 
+                VK_SHADER_STAGE_VERTEX_BIT | 
+                VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT |
+                VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT |
+                VK_SHADER_STAGE_GEOMETRY_BIT |
+                VK_SHADER_STAGE_FRAGMENT_BIT |
+                VK_SHADER_STAGE_TASK_BIT_EXT |
+                VK_SHADER_STAGE_MESH_BIT_EXT;
+            
+            for (const auto& entry : snapshot.PushConstantHistory)
             {
+                // Optional: filter to graphics-relevant stages (conservative - keeps ALL_GRAPHICS too)
+                // Skip only if exclusively compute/ray-tracing stages
+                bool hasGraphicsStages = (entry.Stages & graphicsStages) != 0;
+                bool hasAllGraphics = (entry.Stages & VK_SHADER_STAGE_ALL_GRAPHICS) != 0;
+                
+                if (!hasGraphicsStages && !hasAllGraphics)
+                {
+                    // This is exclusively compute or ray tracing - skip for graphics replay
+                    continue;
+                }
+
                 VkPipelineLayout layoutToUse =
                     params.OverrideGraphicsLayout ? params.OverrideGraphicsLayout : entry.Layout;
 
                 if (layoutToUse && entry.Size > 0 && fns.CmdPushConstants)
                 {
-                    fns.CmdPushConstants(dstCmd, layoutToUse, entry.Stages, entry.Offset, entry.Size,
-                                         &entry.Data[entry.Offset]);
+                    fns.CmdPushConstants(dstCmd, layoutToUse, entry.Stages, entry.Offset, entry.Size, &entry.Data[0]);
                 }
             }
         }
@@ -919,14 +1405,18 @@ class CommandBufferStateTracker
         // 3.5. Push Constants - Compute (if requested)
         if (params.ReplayComputeToo && params.ReplayPushConstants)
         {
-            auto& comp = snapshot->BP[static_cast<uint32_t>(BindPointIndex::Compute)];
-
-            for (const auto& entry : comp.PushConstantHistory)
+            // Replay compute push constants from global timeline in order
+            constexpr VkShaderStageFlags computeStages = VK_SHADER_STAGE_COMPUTE_BIT;
+            
+            for (const auto& entry : snapshot.PushConstantHistory)
             {
+                // Only replay compute-stage push constants
+                if (!(entry.Stages & computeStages))
+                    continue;
+
                 if (entry.Layout && entry.Size > 0 && fns.CmdPushConstants)
                 {
-                    fns.CmdPushConstants(dstCmd, entry.Layout, entry.Stages, entry.Offset, entry.Size,
-                                         &entry.Data[entry.Offset]);
+                    fns.CmdPushConstants(dstCmd, entry.Layout, entry.Stages, entry.Offset, entry.Size, &entry.Data[0]);
                 }
             }
         }
@@ -934,24 +1424,23 @@ class CommandBufferStateTracker
         // 4. Dynamic State
         if (params.ReplayViewportScissor)
         {
-            ReplayViewports(fns, dstCmd, snapshot->Dyn);
-            ReplayScissors(fns, dstCmd, snapshot->Dyn);
+            ReplayViewports(fns, dstCmd, snapshot.Dyn);
+            ReplayScissors(fns, dstCmd, snapshot.Dyn);
         }
 
         // 4.5. Extended Dynamic State
         if (params.ReplayExtendedDynamicState)
         {
-            ReplayExtendedDynamicState(fns, dstCmd, snapshot->Dyn);
+            ReplayExtendedDynamicState(fns, dstCmd, snapshot.Dyn);
         }
 
         // 5. Vertex/Index
         if (params.ReplayVertexIndex)
         {
-            ReplayVertexBuffers(fns, dstCmd, snapshot->VI);
-            if (snapshot->VI.IndexBufferValid && fns.CmdBindIndexBuffer)
+            ReplayVertexBuffers(fns, dstCmd, snapshot.VI);
+            if (snapshot.VI.IndexBufferValid && fns.CmdBindIndexBuffer)
             {
-                fns.CmdBindIndexBuffer(dstCmd, snapshot->VI.IndexBuffer, snapshot->VI.IndexOffset,
-                                       snapshot->VI.IndexType);
+                fns.CmdBindIndexBuffer(dstCmd, snapshot.VI.IndexBuffer, snapshot.VI.IndexOffset, snapshot.VI.IndexType);
             }
         }
 
@@ -963,5 +1452,10 @@ class CommandBufferStateTracker
 
     VulkanCmdFns _cachedFns {};
     bool _hasCachedFns = false;
+
+    // Per-pool epoch tracking for accurate invalidation
+    std::unordered_map<VkCommandBuffer, VkCommandPool> _cmdBufferToPool;
+    std::unordered_map<VkCommandPool, uint64_t> _poolEpochs;
+    uint64_t _globalEpochCounter = 1;
 };
 } // namespace vk_state

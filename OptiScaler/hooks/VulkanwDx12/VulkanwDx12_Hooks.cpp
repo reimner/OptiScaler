@@ -24,6 +24,8 @@ static PFN_vkResetCommandBuffer o_vkResetCommandBuffer = nullptr;
 static PFN_vkCmdExecuteCommands o_vkCmdExecuteCommands = nullptr;
 static PFN_vkFreeCommandBuffers o_vkFreeCommandBuffers = nullptr;
 static PFN_vkResetCommandPool o_vkResetCommandPool = nullptr;
+static PFN_vkAllocateCommandBuffers o_vkAllocateCommandBuffers = nullptr;
+static PFN_vkDestroyCommandPool o_vkDestroyCommandPool = nullptr;
 
 #pragma region vkCmd function pointers
 
@@ -6432,6 +6434,38 @@ void Vulkan_wDx12::hk_vkFreeCommandBuffers(VkDevice device, VkCommandPool comman
     o_vkFreeCommandBuffers(device, commandPool, commandBufferCount, pCommandBuffers);
 }
 
+VkResult Vulkan_wDx12::hk_vkAllocateCommandBuffers(VkDevice device, const VkCommandBufferAllocateInfo* pAllocateInfo,
+                                                   VkCommandBuffer* pCommandBuffers)
+{
+#ifdef LOG_ALL_RECORDS
+    LOG_DEBUG("device: {:X}, pCommandBuffers: {:X}", (size_t) device, (size_t) pCommandBuffers);
+#endif
+
+    auto result = o_vkAllocateCommandBuffers(device, pAllocateInfo, pCommandBuffers);
+
+    if (result == VK_SUCCESS && pAllocateInfo != nullptr && pCommandBuffers != nullptr)
+    {
+        // Notify state tracker about new command buffers
+        cmdBufferStateTracker.OnAllocateCommandBuffers(pAllocateInfo->commandPool, pAllocateInfo->commandBufferCount,
+                                                       pCommandBuffers);
+    }
+
+    return result;
+}
+
+void Vulkan_wDx12::hk_vkDestroyCommandPool(VkDevice device, VkCommandPool commandPool,
+                                           const VkAllocationCallbacks* pAllocator)
+{
+#ifdef LOG_ALL_RECORDS
+    LOG_DEBUG("device: {:X}, commandPool: {:X}", (size_t) device, (size_t) commandPool);
+#endif
+
+    // Notify state tracker about pool destruction
+    cmdBufferStateTracker.OnDestroyPool(commandPool);
+
+    o_vkDestroyCommandPool(device, commandPool, pAllocator);
+}
+
 VkResult Vulkan_wDx12::hk_vkResetCommandPool(VkDevice device, VkCommandPool commandPool, VkCommandPoolResetFlags flags)
 {
 #ifdef LOG_ALL_RECORDS
@@ -6541,6 +6575,24 @@ PFN_vkVoidFunction Vulkan_wDx12::GetAddress(PFN_vkVoidFunction original, const c
             o_vkResetCommandPool = (PFN_vkResetCommandPool) original;
 
         return (PFN_vkVoidFunction) hk_vkResetCommandPool;
+    }
+    if (procName == std::string("vkAllocateCommandBuffers"))
+    {
+        LOG_DEBUG("vkAllocateCommandBuffers");
+
+        if (o_vkAllocateCommandBuffers == nullptr)
+            o_vkAllocateCommandBuffers = (PFN_vkAllocateCommandBuffers) original;
+
+        return (PFN_vkVoidFunction) hk_vkAllocateCommandBuffers;
+    }
+    if (procName == std::string("vkDestroyCommandPool"))
+    {
+        LOG_DEBUG("vkDestroyCommandPool");
+
+        if (o_vkDestroyCommandPool == nullptr)
+            o_vkDestroyCommandPool = (PFN_vkDestroyCommandPool) original;
+
+        return (PFN_vkVoidFunction) hk_vkDestroyCommandPool;
     }
     if (procName == std::string("vkCmdBindPipeline"))
     {
@@ -8980,6 +9032,9 @@ void Vulkan_wDx12::Hook(HMODULE vulkanModule)
     o_vkFreeCommandBuffers = (PFN_vkFreeCommandBuffers) GetProcAddress(vulkanModule, "vkFreeCommandBuffers");
     o_vkResetCommandPool = (PFN_vkResetCommandPool) GetProcAddress(vulkanModule, "vkResetCommandPool");
     o_vkCmdExecuteCommands = (PFN_vkCmdExecuteCommands) GetProcAddress(vulkanModule, "vkCmdExecuteCommands");
+    o_vkAllocateCommandBuffers =
+        (PFN_vkAllocateCommandBuffers) GetProcAddress(vulkanModule, "vkAllocateCommandBuffers");
+    o_vkDestroyCommandPool = (PFN_vkDestroyCommandPool) GetProcAddress(vulkanModule, "vkDestroyCommandPool");
 
 #pragma region vkCmd functions
 
@@ -9436,8 +9491,14 @@ void Vulkan_wDx12::Hook(HMODULE vulkanModule)
         if (o_vkFreeCommandBuffers)
             DetourAttach(&(PVOID&) o_vkFreeCommandBuffers, hk_vkFreeCommandBuffers);
 
-        if (o_vkResetCommandPool)
+        if (o_vkAllocateCommandBuffers != nullptr)
+            DetourAttach(&(PVOID&) o_vkAllocateCommandBuffers, hk_vkAllocateCommandBuffers);
+
+        if (o_vkResetCommandPool != nullptr)
             DetourAttach(&(PVOID&) o_vkResetCommandPool, hk_vkResetCommandPool);
+
+        if (o_vkDestroyCommandPool != nullptr)
+            DetourAttach(&(PVOID&) o_vkDestroyCommandPool, hk_vkDestroyCommandPool);
 
         if (o_vkCmdExecuteCommands)
             DetourAttach(&(PVOID&) o_vkCmdExecuteCommands, hk_vkCmdExecuteCommands);
