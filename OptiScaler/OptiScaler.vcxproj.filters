@@ -665,6 +665,33 @@
     <ClInclude Include="upscalers\IFeature_Dx11wDx12.h">
       <Filter>Source Files</Filter>
     </ClInclude>
+    <ClInclude Include="upscalers\IFeature_VkwDx12.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="upscalers\fsr31\FSR31Feature_VkOn12.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="shaders\depth_transfer\precompile\dt_Shader_Vk.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="shaders\depth_transfer\DT_Vk.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="shaders\resource_copy\RC_Vk.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="shaders\resource_copy\precompile\rc_Shader_Vk.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="hooks\VulkanwDx12\VulkanwDx12_Hooks.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="inputs\FG\XeSS_Dx12_FG.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="hooks\VulkanwDx12\CommandBuffer_StateTracker.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="Config.cpp">
@@ -1044,6 +1071,24 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="pch.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="upscalers\IFeature_VkwDx12.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="upscalers\fsr31\FSR31Feature_VkOn12.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="shaders\depth_transfer\DT_Vk.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="shaders\resource_copy\RC_Vk.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="hooks\VulkanwDx12\VulkanwDx12_Hooks.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="inputs\FG\XeSS_Dx12_FG.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>

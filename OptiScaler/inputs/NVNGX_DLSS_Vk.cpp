@@ -909,16 +909,17 @@ NVSDK_NGX_API NVSDK_NGX_Result NVSDK_NGX_VULKAN_EvaluateFeature(VkCommandBuffer 
     deviceContext = VkContexts[handleId].feature.get();
     State::Instance().currentFeature = deviceContext;
 
-    if (!deviceContext->IsInited() && Config::Instance()->VulkanUpscaler.value_or_default() != "fsr22")
+    UpscalerTimeVk::UpscaleStart(InCmdList);
+
+    auto upscaleResult = deviceContext->Evaluate(InCmdList, InParameters);
+
+    if (!upscaleResult && !deviceContext->IsInited() &&
+        Config::Instance()->VulkanUpscaler.value_or_default() != "fsr22")
     {
         State::Instance().newBackend = "fsr22";
         State::Instance().changeBackend[handleId] = true;
         return NVSDK_NGX_Result_Success;
     }
-
-    UpscalerTimeVk::UpscaleStart(InCmdList);
-
-    auto upscaleResult = deviceContext->Evaluate(InCmdList, InParameters);
 
     UpscalerTimeVk::UpscaleEnd(InCmdList);
 

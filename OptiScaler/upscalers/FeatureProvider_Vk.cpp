@@ -12,6 +12,7 @@
 #include "upscalers/fsr2_212/FSR2Feature_Vk_212.h"
 #include "upscalers/fsr31/FSR31Feature_Vk.h"
 #include "upscalers/xess/XeSSFeature_Vk.h"
+#include "upscalers/fsr31/FSR31Feature_VkOn12.h"
 
 bool FeatureProvider_Vk::GetFeature(std::string upscalerName, UINT handleId, NVSDK_NGX_Parameter* parameters,
                                     std::unique_ptr<IFeature_Vk>* feature)
@@ -36,6 +37,11 @@ bool FeatureProvider_Vk::GetFeature(std::string upscalerName, UINT handleId, NVS
         else if (upscalerName == "fsr31")
         {
             *feature = std::make_unique<FSR31FeatureVk>(handleId, parameters);
+            break;
+        }
+        else if (upscalerName == "fsr31_12")
+        {
+            *feature = std::make_unique<FSR31FeatureVkOn12>(handleId, parameters);
             break;
         }
 
@@ -122,6 +128,8 @@ bool FeatureProvider_Vk::ChangeFeature(std::string upscalerName, VkInstance inst
             contextData->createParams->Set(NVSDK_NGX_Parameter_PerfQualityValue, dc->PerfQualityValue());
 
             dc = nullptr;
+
+            vkDeviceWaitIdle(device);
 
             LOG_DEBUG("sleeping before reset of current feature for 1000ms");
             std::this_thread::sleep_for(std::chrono::milliseconds(1000));
