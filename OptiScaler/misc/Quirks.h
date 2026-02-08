@@ -360,6 +360,10 @@ static const QuirkEntry quirkTable[] = {
     QUIRK_ENTRY("endfield.exe", GameQuirk::DontUseNtDllHooks, GameQuirk::VulkanDLSSBarrierFixup,
                 GameQuirk::EnableVulkanSpoofing, GameQuirk::EnableVulkanExtensionSpoofing),
 
+    // Indiana Jones and the Great Circle
+    // VK Ext spoof needed for unlocking DLSS and DLSS-FG
+    QUIRK_ENTRY("thegreatcircle.exe", GameQuirk::EnableVulkanExtensionSpoofing, GameQuirk::DisableDxgiSpoofing),
+
 };
 
 static flag_set<GameQuirk> getQuirksForExe(std::string exeName)
