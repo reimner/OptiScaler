@@ -1199,6 +1199,8 @@ bool FSRFG_Dx12::SetResource(Dx12Resource* inputResource)
 
     auto& type = inputResource->type;
 
+    std::lock_guard<std::mutex> lock(_frMutex);
+
     if (_frameResources[fIndex].contains(type) &&
         _frameResources[fIndex][type].validity == FG_ResourceValidity::ValidNow)
     {
@@ -1219,8 +1221,6 @@ bool FSRFG_Dx12::SetResource(Dx12Resource* inputResource)
 
     if (type == FG_ResourceType::UIColor && Config::Instance()->FGDisableUI.value_or_default())
         return false;
-
-    std::lock_guard<std::mutex> lock(_frMutex);
 
     if (inputResource->cmdList == nullptr && inputResource->validity == FG_ResourceValidity::ValidNow)
     {

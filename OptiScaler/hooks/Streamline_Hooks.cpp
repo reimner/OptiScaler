@@ -477,9 +477,26 @@ bool StreamlineHooks::hkdlss_slOnPluginLoad(void* params, const char* loaderJSON
     {
         nlohmann::json configJson = nlohmann::json::parse(*pluginJSON);
 
-        configJson["external"]["vk"]["instance"]["extensions"].clear();
-        configJson["external"]["vk"]["device"]["extensions"].clear();
-        configJson["external"]["vk"]["device"]["1.2_features"].clear();
+        if (configJson.contains("/vk/instance/extensions"_json_pointer))
+            configJson["external"]["vk"]["instance"]["extensions"].clear();
+
+        if (configJson.contains("/vk/device/extensions"_json_pointer))
+            configJson["external"]["vk"]["device"]["extensions"].clear();
+
+        if (configJson.contains("/vk/device/1.2_features"_json_pointer))
+            configJson["external"]["vk"]["device"]["1.2_features"].clear();
+
+        if (configJson.contains("/vk/device/1.3_features"_json_pointer))
+            configJson["external"]["vk"]["device"]["1.3_features"].clear();
+
+        // if (configJson.contains("/vk/device/queues/graphics/count"_json_pointer))
+        //     configJson["external"]["device"]["queues"]["compute"]["count"] = 0;
+
+        // if (configJson.contains("/vk/device/queues/compute/count"_json_pointer))
+        //     configJson["external"]["device"]["queues"]["graphics"]["count"] = 0;
+
+        // if (configJson.contains("/vk/device/queues/opticalflow/count"_json_pointer))
+        //     configJson["external"]["vk"]["device"]["1.3_features"]["opticalflow"]["count"] = 0;
 
         config = configJson.dump();
 
@@ -520,14 +537,38 @@ bool StreamlineHooks::hkdlssg_slOnPluginLoad(void* params, const char* loaderJSO
     {
         configJson["hooks"].clear();
         configJson["exclusive_hooks"].clear();
+
+        if (configJson.contains("vsync"))
+            configJson["vsync"]["supported"] = true; // disable eVSyncOffRequired
+
+        if (configJson.contains("hws"))
+            configJson["hws"]["required"] = false; // disable eHardwareSchedulingRequired
+
         configJson["external"]["feature"]["tags"].clear(); // We handle the DLSSG resources
     }
 
     if (Config::Instance()->VulkanExtensionSpoofing.value_or_default())
     {
-        configJson["external"]["vk"]["instance"]["extensions"].clear();
-        configJson["external"]["vk"]["device"]["extensions"].clear();
-        configJson["external"]["vk"]["device"]["1.2_features"].clear();
+        if (configJson.contains("/vk/instance/extensions"_json_pointer))
+            configJson["external"]["vk"]["instance"]["extensions"].clear();
+
+        if (configJson.contains("/vk/device/extensions"_json_pointer))
+            configJson["external"]["vk"]["device"]["extensions"].clear();
+
+        if (configJson.contains("/vk/device/1.2_features"_json_pointer))
+            configJson["external"]["vk"]["device"]["1.2_features"].clear();
+
+        if (configJson.contains("/vk/device/1.3_features"_json_pointer))
+            configJson["external"]["vk"]["device"]["1.3_features"].clear();
+
+        if (configJson.contains("/vk/device/queues/graphics/count"_json_pointer))
+            configJson["external"]["device"]["queues"]["compute"]["count"] = 0;
+
+        if (configJson.contains("/vk/device/queues/compute/count"_json_pointer))
+            configJson["external"]["device"]["queues"]["graphics"]["count"] = 0;
+
+        if (configJson.contains("/vk/device/queues/opticalflow/count"_json_pointer))
+            configJson["external"]["vk"]["device"]["1.3_features"]["opticalflow"]["count"] = 0;
     }
 
     config = configJson.dump();
@@ -644,6 +685,9 @@ bool StreamlineHooks::hkreflex_slOnPluginLoad(void* params, const char* loaderJS
 {
     LOG_FUNC();
 
+    // TODO: do it better than "static" and hoping for the best
+    static std::string config;
+
     uint32_t currentArch = 0;
     if (Config::Instance()->StreamlineSpoofing.value_or_default())
     {
@@ -656,6 +700,36 @@ bool StreamlineHooks::hkreflex_slOnPluginLoad(void* params, const char* loaderJS
 
     if (Config::Instance()->StreamlineSpoofing.value_or_default())
         setArch(currentArch);
+
+    nlohmann::json configJson = nlohmann::json::parse(*pluginJSON);
+
+    if (Config::Instance()->VulkanExtensionSpoofing.value_or_default())
+    {
+        if (configJson.contains("/vk/instance/extensions"_json_pointer))
+            configJson["external"]["vk"]["instance"]["extensions"].clear();
+
+        if (configJson.contains("/vk/device/extensions"_json_pointer))
+            configJson["external"]["vk"]["device"]["extensions"].clear();
+
+        if (configJson.contains("/vk/device/1.2_features"_json_pointer))
+            configJson["external"]["vk"]["device"]["1.2_features"].clear();
+
+        if (configJson.contains("/vk/device/1.3_features"_json_pointer))
+            configJson["external"]["vk"]["device"]["1.3_features"].clear();
+
+        if (configJson.contains("/vk/device/queues/graphics/count"_json_pointer))
+            configJson["external"]["device"]["queues"]["compute"]["count"] = 0;
+
+        if (configJson.contains("/vk/device/queues/compute/count"_json_pointer))
+            configJson["external"]["device"]["queues"]["graphics"]["count"] = 0;
+
+        if (configJson.contains("/vk/device/queues/opticalflow/count"_json_pointer))
+            configJson["external"]["vk"]["device"]["1.3_features"]["opticalflow"]["count"] = 0;
+    }
+
+    config = configJson.dump();
+
+    *pluginJSON = config.c_str();
 
     return result;
 }

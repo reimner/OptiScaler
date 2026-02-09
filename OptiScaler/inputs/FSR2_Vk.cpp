@@ -76,44 +76,57 @@ static NVSDK_NGX_Resource_VK fsrTransparencyNVRes {};
 
 static VkFormat ffxApiGetVkFormat(uint32_t fmt)
 {
+
     switch (fmt)
     {
+    // 32-bit float formats
     case FFX_SURFACE_FORMAT_R32G32B32A32_FLOAT:
         return VK_FORMAT_R32G32B32A32_SFLOAT;
     case FFX_SURFACE_FORMAT_R16G16B16A16_FLOAT:
         return VK_FORMAT_R16G16B16A16_SFLOAT;
     case FFX_SURFACE_FORMAT_R32G32_FLOAT:
         return VK_FORMAT_R32G32_SFLOAT;
+    case FFX_SURFACE_FORMAT_R32_FLOAT:
+        return VK_FORMAT_R32_SFLOAT;
+
+    // 32-bit integer formats
     case FFX_SURFACE_FORMAT_R32_UINT:
         return VK_FORMAT_R32_UINT;
     case FFX_SURFACE_FORMAT_R8G8B8A8_UNORM:
         return VK_FORMAT_R8G8B8A8_UNORM;
     case FFX_SURFACE_FORMAT_R11G11B10_FLOAT:
         return VK_FORMAT_B10G11R11_UFLOAT_PACK32;
+
+    // 16-bit float formats
     case FFX_SURFACE_FORMAT_R16G16_FLOAT:
         return VK_FORMAT_R16G16_SFLOAT;
     case FFX_SURFACE_FORMAT_R16G16_UINT:
         return VK_FORMAT_R16G16_UINT;
     case FFX_SURFACE_FORMAT_R16_FLOAT:
         return VK_FORMAT_R16_SFLOAT;
+
+    // 16-bit integer formats
     case FFX_SURFACE_FORMAT_R16_UINT:
         return VK_FORMAT_R16_UINT;
+
+    // 16-bit normalized formats
+    case FFX_SURFACE_FORMAT_R16G16B16A16_UNORM:
+        return VK_FORMAT_R16G16B16A16_UNORM;
     case FFX_SURFACE_FORMAT_R16_UNORM:
         return VK_FORMAT_R16_UNORM;
     case FFX_SURFACE_FORMAT_R16_SNORM:
         return VK_FORMAT_R16_SNORM;
+
+    // 8-bit formats
+    case FFX_SURFACE_FORMAT_R8G8_UNORM:
+        return VK_FORMAT_R8G8_UNORM;
     case FFX_SURFACE_FORMAT_R8_UNORM:
         return VK_FORMAT_R8_UNORM;
     case FFX_SURFACE_FORMAT_R8_UINT:
         return VK_FORMAT_R8_UINT;
-    case FFX_SURFACE_FORMAT_R8G8_UNORM:
-        return VK_FORMAT_R8G8_UNORM;
-    case FFX_SURFACE_FORMAT_R32_FLOAT:
-        return VK_FORMAT_R32_SFLOAT;
-    case FFX_SURFACE_FORMAT_UNKNOWN:
-        return VK_FORMAT_UNDEFINED;
 
     default:
+        LOG_WARN("Unknown FFX surface format: {}", fmt);
         return VK_FORMAT_UNDEFINED;
     }
 }

@@ -261,7 +261,11 @@ static VkResult hkvkCreateSwapchainKHR(VkDevice device, const VkSwapchainCreateI
     LOG_FUNC();
 
     ScopedVulkanCreatingSC scopedVulkanCreatingSC {};
-    auto result = o_CreateSwapchainKHR(device, pCreateInfo, pAllocator, pSwapchain);
+    VkResult result = VK_SUCCESS;
+    {
+        ScopedSkipSpoofing skipSpoofing {};
+        result = o_CreateSwapchainKHR(device, pCreateInfo, pAllocator, pSwapchain);
+    }
 
     if (result == VK_SUCCESS && device != VK_NULL_HANDLE && pCreateInfo != nullptr && *pSwapchain != VK_NULL_HANDLE &&
         !State::Instance().vulkanSkipHooks)

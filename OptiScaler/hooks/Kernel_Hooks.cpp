@@ -94,11 +94,11 @@ FARPROC WINAPI KernelHooks::hk_K32_GetProcAddress(HMODULE hModule, LPCSTR lpProc
         return o_K32_GetProcAddress(hModule, lpProcName);
     }
 
-    if (hModule == dllModule && lpProcName != nullptr)
-    {
-        LOG_TRACE("Trying to get process address of {}, caller: {}", lpProcName,
-                  Util::WhoIsTheCaller(_ReturnAddress()));
-    }
+    // if (hModule == dllModule && lpProcName != nullptr)
+    //{
+    //     LOG_TRACE("Trying to get process address of {}, caller: {}", lpProcName,
+    //               Util::WhoIsTheCaller(_ReturnAddress()));
+    // }
 
     // FSR 4 Init in case of missing amdxc64.dll
     // 2nd check is amdxcffx64.dll trying to queue amdxc64 but amdxc64 not being loaded.
@@ -177,11 +177,11 @@ FARPROC WINAPI KernelHooks::hk_KB_GetProcAddress(HMODULE hModule, LPCSTR lpProcN
         return o_KB_GetProcAddress(hModule, lpProcName);
     }
 
-    if (hModule == dllModule && lpProcName != nullptr)
-    {
-        LOG_TRACE("Trying to get process address of {}, caller: {}", lpProcName,
-                  Util::WhoIsTheCaller(_ReturnAddress()));
-    }
+    // if (hModule == dllModule && lpProcName != nullptr)
+    //{
+    //     LOG_TRACE("Trying to get process address of {}, caller: {}", lpProcName,
+    //               Util::WhoIsTheCaller(_ReturnAddress()));
+    // }
 
     if (State::Instance().isRunningOnLinux && lpProcName != nullptr &&
         hModule == KernelBaseProxy::GetModuleHandleW_()(L"gdi32.dll") &&

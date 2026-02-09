@@ -1067,6 +1067,8 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
 
     auto& type = inputResource->type;
 
+    std::lock_guard<std::mutex> lock(_frMutex);
+
     if (type == FG_ResourceType::HudlessColor)
     {
         if (Config::Instance()->FGDisableHudless.value_or_default())
@@ -1107,8 +1109,6 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
     {
         return false;
     }
-
-    std::lock_guard<std::mutex> lock(_frMutex);
 
     if (inputResource->cmdList == nullptr && inputResource->validity == FG_ResourceValidity::ValidNow)
     {
