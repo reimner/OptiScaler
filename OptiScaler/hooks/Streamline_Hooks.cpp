@@ -517,28 +517,29 @@ bool StreamlineHooks::hkdlssg_slOnPluginLoad(void* params, const char* loaderJSO
 
     nlohmann::json configJson = nlohmann::json::parse(*pluginJSON);
 
-    // LOG_TRACE("before pluginJSON: {}", *pluginJSON);
-
-    // Kill the DLSSG streamline swapchain hooks
-    if (State::Instance().activeFgInput == FGInput::DLSSG)
+    if (Config::Instance()->StreamlineSpoofing.value_or_default())
     {
-        if (configJson.contains("hooks"))
-            configJson["hooks"].clear();
+        // Kill the DLSSG streamline swapchain hooks
+        if (State::Instance().activeFgInput == FGInput::DLSSG)
+        {
+            if (configJson.contains("hooks"))
+                configJson["hooks"].clear();
 
-        if (configJson.contains("exclusive_hooks"))
-            configJson["exclusive_hooks"].clear();
+            if (configJson.contains("exclusive_hooks"))
+                configJson["exclusive_hooks"].clear();
 
-        if (configJson.contains("vsync"))
-            configJson["vsync"]["supported"] = true; // disable eVSyncOffRequired
+            if (configJson.contains("vsync"))
+                configJson["vsync"]["supported"] = true; // disable eVSyncOffRequired
 
-        if (configJson.contains("/external/feature/tags"_json_pointer))
-            configJson["external"]["feature"]["tags"].clear(); // We handle the DLSSG resources
-    }
+            if (configJson.contains("/external/feature/tags"_json_pointer))
+                configJson["external"]["feature"]["tags"].clear(); // We handle the DLSSG resources
+        }
 
-    if (State::Instance().activeFgInput == FGInput::DLSSG || State::Instance().activeFgInput == FGInput::Nukems)
-    {
-        if (configJson.contains("/external/hws/required"_json_pointer))
-            configJson["external"]["hws"]["required"] = false; // disable eHardwareSchedulingRequired
+        if (State::Instance().activeFgInput == FGInput::DLSSG || State::Instance().activeFgInput == FGInput::Nukems)
+        {
+            if (configJson.contains("/external/hws/required"_json_pointer))
+                configJson["external"]["hws"]["required"] = false; // disable eHardwareSchedulingRequired
+        }
     }
 
     if (Config::Instance()->VulkanExtensionSpoofing.value_or_default())
@@ -556,8 +557,6 @@ bool StreamlineHooks::hkdlssg_slOnPluginLoad(void* params, const char* loaderJSO
     config = configJson.dump();
 
     *pluginJSON = config.c_str();
-
-    // LOG_TRACE("after char pluginJSON: {}", *pluginJSON);
 
     return result;
 }
@@ -582,7 +581,7 @@ bool StreamlineHooks::hkcommon_slOnPluginLoad(void* params, const char* loaderJS
 
     auto result = o_common_slOnPluginLoad(params, loaderJSON, pluginJSON);
 
-    if (State::Instance().activeFgInput == FGInput::DLSSG)
+    if (Config::Instance()->StreamlineSpoofing.value_or_default() && State::Instance().activeFgInput == FGInput::DLSSG)
     {
         nlohmann::json configJson = nlohmann::json::parse(*pluginJSON);
 
