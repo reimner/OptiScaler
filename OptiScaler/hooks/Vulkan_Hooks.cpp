@@ -4,7 +4,7 @@
 
 #include <Util.h>
 #include <Config.h>
-#include <SysUtils.h>   
+#include <SysUtils.h>
 
 #include <menu/menu_overlay_vk.h>
 #include <proxies/KernelBase_Proxy.h>
