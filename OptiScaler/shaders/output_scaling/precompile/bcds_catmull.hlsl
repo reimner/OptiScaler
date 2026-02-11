@@ -75,7 +75,7 @@ void CSMain(uint3 id : SV_DispatchThreadID)
     float2 scale = float2((float) _SrcWidth / (float) _DstWidth,
                           (float) _SrcHeight / (float) _DstHeight);
 
-    float2 srcPos = dst * scale - 0.5f;
+    float2 srcPos = dst * scale - 0.45f;
 
     float2 ip = floor(srcPos);
     float2 f = srcPos - ip;

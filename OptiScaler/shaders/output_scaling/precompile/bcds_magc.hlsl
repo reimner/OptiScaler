@@ -20,12 +20,11 @@ Texture2D<float4> InputTexture : register(t0);
 #endif
 RWTexture2D<float4> OutputTexture : register(u0);
 
-#ifdef VK_MODE
-[[vk::binding(3, 0)]]
-#endif
-SamplerState LinearClampSampler : register(s0);
+static int ClampInt(int v, int lo, int hi)
+{
+    return min(max(v, lo), hi);
+}
 
-// Magic Kernel m(x), support [-1.5, +1.5]
 static float MagicKernel(float x)
 {
     float ax = abs(x);
@@ -48,57 +47,170 @@ static float MagicKernel(float x)
     }
 }
 
+static const float R = 1.5f;
+
+#define TILE_SIZE 32
+#define MAX_TAPS  12
+
+// Use float4 for better LDS alignment; ignore .w
+groupshared float4 lds_input[TILE_SIZE][TILE_SIZE];
+
 [numthreads(8, 8, 1)]
-void CSMain(uint3 id : SV_DispatchThreadID)
+void CSMain(uint3 id : SV_DispatchThreadID,
+            uint3 groupID : SV_GroupID,
+            uint3 tid : SV_GroupThreadID)
 {
-    uint ox = id.x;
-    uint oy = id.y;
-    if (ox >= (uint) _DstWidth || oy >= (uint) _DstHeight)
+    // Early out if group is completely outside (still safe to return early,
+    // but we need LDS load for in-bounds threads; easiest is per-thread after load.)
+    float2 srcDim = float2(_SrcWidth, _SrcHeight);
+    float2 dstDim = float2(_DstWidth, _DstHeight);
+    float2 k = dstDim / srcDim; // k < 1 for downsample
+
+    // ----------------------------
+    // 1) Compute the source tile footprint for the *whole* 8x8 output block.
+    // Output pixels covered by this group: [base .. base+7] in each axis.
+    // We need the min lower bound from (base) and the max upper bound from (base+7).
+    // Condition: |k*(x+0.5) - (o+0.5)| < R
+    // Lower: x > ((o+0.5)-R)/k - 0.5
+    // Upper: x < ((o+0.5)+R)/k - 0.5
+    // ----------------------------
+    int2 outBase = int2(groupID.xy * 8);
+
+    float2 oMin = float2(outBase) + 0.5f;
+    float2 oMax = float2(outBase + int2(7, 7)) + 0.5f;
+
+    float2 gLowerF = (oMin - R) / k - 0.5f;
+    float2 gUpperF = (oMax + R) / k - 0.5f;
+
+    int2 g0 = (int2) ceil(gLowerF);
+    int2 g1 = (int2) floor(gUpperF);
+
+    // Desired tile extents in source space
+    int tileW = g1.x - g0.x + 1;
+    int tileH = g1.y - g0.y + 1;
+
+    // Clamp tile size to LDS capacity (should be <= 32 for k>=1/3; if not, we truncate)
+    tileW = ClampInt(tileW, 1, TILE_SIZE);
+    tileH = ClampInt(tileH, 1, TILE_SIZE);
+
+    // Choose tile start so that it stays in-bounds and still covers as much of [g0..g1] as possible.
+    // If g0 is negative, start at 0. If g1 exceeds src-1, shift start left/up.
+    int2 tileStart;
+    tileStart.x = g0.x;
+    tileStart.y = g0.y;
+
+    // Ensure tileStart so that [tileStart .. tileStart+tileW-1] within [0..Src-1]
+    tileStart.x = ClampInt(tileStart.x, 0, max(_SrcWidth - tileW, 0));
+    tileStart.y = ClampInt(tileStart.y, 0, max(_SrcHeight - tileH, 0));
+
+    // ----------------------------
+    // 2) Cooperative load into LDS: only load tileW*tileH texels (not always 32x32).
+    // ----------------------------
+    uint lane = tid.y * 8u + tid.x;
+    uint total = (uint) (tileW * tileH);
+
+    for (uint idx = lane; idx < total; idx += 64u)
+    {
+        int lx = (int) (idx % (uint) tileW);
+        int ly = (int) (idx / (uint) tileW);
+
+        int2 srcPos = tileStart + int2(lx, ly);
+        // tileStart already chosen in-bounds, so srcPos is in-bounds; clamp is cheap insurance:
+        srcPos.x = ClampInt(srcPos.x, 0, _SrcWidth - 1);
+        srcPos.y = ClampInt(srcPos.y, 0, _SrcHeight - 1);
+
+        lds_input[ly][lx] = InputTexture.Load(int3(srcPos, 0));
+    }
+
+    GroupMemoryBarrierWithGroupSync();
+
+    // ----------------------------
+    // 3) Per-thread pixel work
+    // ----------------------------
+    if (id.x >= (uint) _DstWidth || id.y >= (uint) _DstHeight)
         return;
 
-    // Scale from dst -> src (texel space, center aligned)
-    float2 dst = float2((float) ox + 0.5f, (float) oy + 0.5f);
-    float2 scale = float2((float) _SrcWidth / (float) _DstWidth,
-                          (float) _SrcHeight / (float) _DstHeight);
+    float2 o = float2(id.xy) + 0.5f;
 
-    // srcPos in texel space where texel centers are at i+0.5
-    float2 srcPos = dst * scale - 0.5f;
+    // Compute per-pixel bounds
+    float2 lowerF = (o - R) / k - 0.5f;
+    float2 upperF = (o + R) / k - 0.5f;
 
-    // We’ll sample a small fixed 3x3 grid around srcPos using bilinear sampling.
-    // Choose offsets in texel space. This covers roughly [-1, 0, +1] around srcPos.
-    // Magic support is ±1.5, so 3x3 is a reasonable fast approximation.
-    static const float offs[3] = { -1.0f, 0.0f, 1.0f };
+    int2 x0y0 = (int2) ceil(lowerF);
+    int2 x1y1 = (int2) floor(upperF);
 
-    float2 invSrc = 1.0f / float2((float) _SrcWidth, (float) _SrcHeight);
+    // Clamp to source bounds
+    x0y0.x = ClampInt(x0y0.x, 0, _SrcWidth - 1);
+    x1y1.x = ClampInt(x1y1.x, 0, _SrcWidth - 1);
+    x0y0.y = ClampInt(x0y0.y, 0, _SrcHeight - 1);
+    x1y1.y = ClampInt(x1y1.y, 0, _SrcHeight - 1);
 
-    float3 acc = 0.0f;
-    float wsum = 0.0f;
+    int nx = x1y1.x - x0y0.x + 1;
+    int ny = x1y1.y - x0y0.y + 1;
+
+    // Safety: for k>=1/3, nx,ny should be <= 9 for Magic. We keep MAX_TAPS=12 headroom.
+    nx = ClampInt(nx, 1, MAX_TAPS);
+    ny = ClampInt(ny, 1, MAX_TAPS);
+
+    float wx[MAX_TAPS];
+    float wy[MAX_TAPS];
+    float sumWx = 0.0f;
+    float sumWy = 0.0f;
 
     [unroll]
-    for (int j = 0; j < 3; ++j)
+    for (int i = 0; i < MAX_TAPS; ++i)
     {
-        float dy = offs[j];
-        float wy = MagicKernel(dy); // approximate: weight based on integer offset
+        if (i < nx)
+        {
+            int sx = x0y0.x + i;
+            float u = k.x * ((float) sx + 0.5f) - o.x;
+            float w = MagicKernel(u);
+            wx[i] = w;
+            sumWx += w;
+        }
+        else
+            wx[i] = 0.0f;
+
+        if (i < ny)
+        {
+            int sy = x0y0.y + i;
+            float v = k.y * ((float) sy + 0.5f) - o.y;
+            float w = MagicKernel(v);
+            wy[i] = w;
+            sumWy += w;
+        }
+        else
+            wy[i] = 0.0f;
+    }
+
+    float invSumWx = (sumWx > 0.0f) ? (1.0f / sumWx) : 0.0f;
+    float invSumWy = (sumWy > 0.0f) ? (1.0f / sumWy) : 0.0f;
+
+    // LDS offsets: since the group tile was built to cover all group pixels' footprints,
+    // these should be within [0..tileW/H). Clamp only for safety, but it should rarely hit.
+    int baseLX = ClampInt(x0y0.x - tileStart.x, 0, tileW - nx);
+    int baseLY = ClampInt(x0y0.y - tileStart.y, 0, tileH - ny);
+
+    float3 acc = 0.0f;
+
+    [loop]
+    for (int j = 0; j < ny; ++j)
+    {
+        float wyj = wy[j] * invSumWy;
+        int ly = baseLY + j;
 
         [unroll]
-        for (int i = 0; i < 3; ++i)
+        for (int i = 0; i < MAX_TAPS; ++i)
         {
-            float dx = offs[i];
-            float wx = MagicKernel(dx);
-            float w = wx * wy;
+            if (i < nx)
+            {
+                float w = (wx[i] * invSumWx) * wyj;
+                int lx = baseLX + i;
 
-            float2 p = srcPos + float2(dx, dy);
-            float2 uv = (p + 0.5f) * invSrc;
-
-            float3 s = InputTexture.SampleLevel(LinearClampSampler, uv, 0.0f).rgb;
-
-            acc += s * w;
-            wsum += w;
+                acc += lds_input[ly][lx].rgb * w;
+            }
         }
     }
 
-    float invW = (wsum > 0.0f) ? (1.0f / wsum) : 0.0f;
-    float3 outRgb = acc * invW;
-
-    OutputTexture[uint2(ox, oy)] = float4(outRgb, 1.0f);
+    OutputTexture[id.xy] = float4(acc, 1.0f);
 }

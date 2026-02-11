@@ -167,14 +167,14 @@ OS_Dx12::OS_Dx12(std::string InName, ID3D12Device* InDevice, bool InUpsample)
     CD3DX12_VERSIONED_ROOT_SIGNATURE_DESC rootSigDesc;
     rootSigDesc.Init_1_1(1, &rootParameter);
 
-    CD3DX12_STATIC_SAMPLER_DESC samplers[1];
+    CD3DX12_STATIC_SAMPLER_DESC samplers[1] {};
 
     // fsr upscaling
     // if (Config::Instance()->OutputScalingUseFsr.value_or_default() ||
     //    (!_upsample && (Config::Instance()->OutputScalingDownscaler.value_or_default() == 0 ||
     //                    Config::Instance()->OutputScalingDownscaler.value_or_default() == 3)))
     {
-        samplers[0].Init(0, D3D12_FILTER_MIN_MAG_MIP_LINEAR);
+        samplers[0].Init(0, D3D12_FILTER_MIN_MAG_LINEAR_MIP_POINT);
         samplers[0].AddressU = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
         samplers[0].AddressV = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
         samplers[0].ShaderRegister = 0;

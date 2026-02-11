@@ -29,7 +29,7 @@ SamplerState LinearClampSampler : register(s0);
 //  -0.5 = Catmull-Rom (sharper)
 //  -0.75 = smoother (more Mitchell-ish feel, less ringing)
 // You can tune this constant. No extra cbuffer needed.
-static const float A = -0.75f;
+static const float A = -0.6f;
 
 // Keys cubic weight for distance x in [0,2)
 static float CubicKeys(float x)
