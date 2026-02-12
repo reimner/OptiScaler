@@ -560,8 +560,8 @@ bool StreamlineHooks::hkdlssg_slOnPluginLoad(void* params, const char* loaderJSO
         if (configJson.contains("/external/hws/required"_json_pointer))
             configJson["external"]["hws"]["required"] = false; // disable eHardwareSchedulingRequired
 
-        if (configJson.contains("/external/vk/opticalflow/supported"_json_pointer))
-            configJson["external"]["vk"]["opticalflow"]["supported"] = true;
+        // if (configJson.contains("/external/vk/opticalflow/supported"_json_pointer))
+        //     configJson["external"]["vk"]["opticalflow"]["supported"] = true;
     }
 
     if (Config::Instance()->VulkanExtensionSpoofing.value_or_default())
