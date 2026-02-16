@@ -90,6 +90,8 @@ static LSTATUS hkRegCloseKey(HKEY hKey)
 static LONG hkRegQueryValueExW(HKEY hKey, LPCWSTR lpValueName, LPDWORD lpReserved, LPDWORD lpType, LPBYTE lpData,
                                LPDWORD lpcbData)
 {
+    static std::wstring vendorId = std::format(L"VEN_{:04X}", Config::Instance()->SpoofedVendorId.value_or_default());
+    static std::wstring deviceId = std::format(L"DEV_{:04X}", Config::Instance()->SpoofedDeviceId.value_or_default());
     std::wstring valueName = L"";
 
     if (lpValueName != NULL)
@@ -97,7 +99,7 @@ static LONG hkRegQueryValueExW(HKEY hKey, LPCWSTR lpValueName, LPDWORD lpReserve
         valueName = std::wstring(lpValueName);
     }
 
-    if (valueName == L"HwSchMode")
+    if (Config::Instance()->SpoofHAGS.value_or_default() && valueName == L"HwSchMode")
     {
         // Check if lpcbData is not NULL
         if (lpcbData != nullptr)
@@ -148,11 +150,12 @@ static LONG hkRegQueryValueExW(HKEY hKey, LPCWSTR lpValueName, LPDWORD lpReserve
     auto result = o_RegQueryValueExW(hKey, lpValueName, lpReserved, lpType, lpData, lpcbData);
 
     // Check the result of the query and if the valueName matches
-    if (result == ERROR_SUCCESS && !State::Instance().isRunningOnNvidia)
+    if (result == ERROR_SUCCESS && Config::Instance()->SpoofRegistry.value_or_default())
     {
         if (valueName == L"DriverVersion")
         {
-            const std::wstring spoofedValue = L"31.0.15.5244";
+            const std::wstring spoofedValue = L"32.0.15.7302";
+
             size_t spoofedValueSize =
                 (spoofedValue.size() + 1) * sizeof(wchar_t); // Size in bytes including null terminator
 
@@ -165,6 +168,8 @@ static LONG hkRegQueryValueExW(HKEY hKey, LPCWSTR lpValueName, LPDWORD lpReserve
                     std::memcpy(lpData, spoofedValue.c_str(), spoofedValueSize);
                     // Update lpcbData with the size of the spoofed value
                     *lpcbData = static_cast<DWORD>(spoofedValueSize);
+
+                    LOG_INFO("New DriverVersion: {}", wstring_to_string(spoofedValue));
                 }
                 else
                 {
@@ -181,21 +186,37 @@ static LONG hkRegQueryValueExW(HKEY hKey, LPCWSTR lpValueName, LPDWORD lpReserve
             std::wstring data(reinterpret_cast<wchar_t*>(lpData), *lpcbData / sizeof(wchar_t));
             std::wstring newData = data;
             size_t pos = 0;
+            bool found = false;
 
             // Replace VEN_1002 and VEN_8086 with VEN_10DE in REG_SZ
             while ((pos = newData.find(L"VEN_1002", pos)) != std::wstring::npos)
             {
-                newData.replace(pos, 8, L"VEN_10DE");
+                newData.replace(pos, 8, vendorId);
                 pos += 8; // Move past the replacement
+                found = true;
             }
+
             pos = 0;
             while ((pos = newData.find(L"VEN_8086", pos)) != std::wstring::npos)
             {
-                newData.replace(pos, 8, L"VEN_10DE");
+                newData.replace(pos, 8, vendorId);
                 pos += 8; // Move past the replacement
+                found = true;
             }
 
-            LOG_ERROR(L"NEW PAYLOAD: " + newData);
+            if (found)
+            {
+                // Replace Device Id
+                pos = 0;
+                while ((pos = newData.find(L"DEV_", pos)) != std::wstring::npos)
+                {
+                    newData.replace(pos, 8, deviceId);
+                    pos += 8; // Move past the replacement
+                }
+
+                LOG_INFO("New HardwareID: {}", wstring_to_string(newData));
+            }
+
             // Copy the new data back
             wcscpy_s(reinterpret_cast<wchar_t*>(lpData), *lpcbData / sizeof(wchar_t), newData.c_str());
         }
@@ -207,6 +228,8 @@ static LONG hkRegQueryValueExW(HKEY hKey, LPCWSTR lpValueName, LPDWORD lpReserve
 LONG WINAPI hkRegQueryValueExA(HKEY hKey, LPCSTR lpValueName, LPDWORD lpReserved, LPDWORD lpType, LPBYTE lpData,
                                LPDWORD lpcbData)
 {
+    static std::string vendorId = std::format("VEN_{:04X}", Config::Instance()->SpoofedVendorId.value_or_default());
+    static std::string deviceId = std::format("DEV_{:04X}", Config::Instance()->SpoofedDeviceId.value_or_default());
     std::string valueName = "";
 
     if (lpValueName != NULL)
@@ -214,7 +237,7 @@ LONG WINAPI hkRegQueryValueExA(HKEY hKey, LPCSTR lpValueName, LPDWORD lpReserved
         valueName = std::string(lpValueName);
     }
 
-    if (valueName == "HwSchMode")
+    if (Config::Instance()->SpoofHAGS.value_or_default() && valueName == "HwSchMode")
     {
         // Check if lpcbData is not NULL
         if (lpcbData != nullptr)
@@ -265,11 +288,11 @@ LONG WINAPI hkRegQueryValueExA(HKEY hKey, LPCSTR lpValueName, LPDWORD lpReserved
     auto result = o_RegQueryValueExA(hKey, lpValueName, lpReserved, lpType, lpData, lpcbData);
 
     // Check the result of the query and if the valueName matches
-    if (result == ERROR_SUCCESS && !State::Instance().isRunningOnNvidia)
+    if (result == ERROR_SUCCESS && Config::Instance()->SpoofRegistry.value_or_default())
     {
         if (valueName == "DriverVersion")
         {
-            const std::wstring spoofedValue = L"31.0.15.5244";
+            const std::string spoofedValue = "32.0.15.7302";
             size_t spoofedValueSize =
                 (spoofedValue.size() + 1) * sizeof(wchar_t); // Size in bytes including null terminator
 
@@ -282,6 +305,8 @@ LONG WINAPI hkRegQueryValueExA(HKEY hKey, LPCSTR lpValueName, LPDWORD lpReserved
                     std::memcpy(lpData, spoofedValue.c_str(), spoofedValueSize);
                     // Update lpcbData with the size of the spoofed value
                     *lpcbData = static_cast<DWORD>(spoofedValueSize);
+
+                    LOG_INFO("New DriverVersion: {}", spoofedValue);
                 }
                 else
                 {
@@ -298,18 +323,35 @@ LONG WINAPI hkRegQueryValueExA(HKEY hKey, LPCSTR lpValueName, LPDWORD lpReserved
             std::string data(reinterpret_cast<char*>(lpData), *lpcbData / sizeof(char));
             std::string newData = data;
             size_t pos = 0;
+            bool found = false;
 
             // Replace VEN_1002 and VEN_8086 with VEN_10DE in REG_SZ
             while ((pos = newData.find("VEN_1002", pos)) != std::wstring::npos)
             {
-                newData.replace(pos, 8, "VEN_10DE");
+                newData.replace(pos, 8, vendorId);
                 pos += 8; // Move past the replacement
+                found = true;
             }
+
             pos = 0;
             while ((pos = newData.find("VEN_8086", pos)) != std::wstring::npos)
             {
-                newData.replace(pos, 8, "VEN_10DE");
+                newData.replace(pos, 8, vendorId);
                 pos += 8; // Move past the replacement
+                found = true;
+            }
+
+            // Replace Device Id
+            if (found)
+            {
+                pos = 0;
+                while ((pos = newData.find("DEV_", pos)) != std::string::npos)
+                {
+                    newData.replace(pos, 8, deviceId);
+                    pos += 8; // Move past the replacement
+                }
+
+                LOG_INFO("New HardwareID: {}", newData);
             }
 
             // Copy the new data back
@@ -328,7 +370,7 @@ static void hookAdvapi32()
     o_RegEnumValueW = reinterpret_cast<PFN_RegEnumValueW>(DetourFindFunction("Advapi32.dll", "RegEnumValueW"));
     o_RegCloseKey = reinterpret_cast<PFN_RegCloseKey>(DetourFindFunction("Advapi32.dll", "RegCloseKey"));
 
-    if (Config::Instance()->SpoofRegistry.value_or_default())
+    if (if (Config::Instance()->SpoofHAGS.value_or_default() || Config::Instance()->SpoofRegistry.value_or_default())
     {
         o_RegQueryValueExW =
             reinterpret_cast<PFN_RegQueryValueExW>(DetourFindFunction("Advapi32.dll", "RegQueryValueExW"));
