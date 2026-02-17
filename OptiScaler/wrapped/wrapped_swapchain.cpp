@@ -240,7 +240,10 @@ static HRESULT LocalPresent(IDXGISwapChain* pSwapChain, UINT SyncInterval, UINT 
 
         LOG_DEBUG("Calling fakenvapi");
         if (State::Instance().activeFgOutput == FGOutput::FSRFG || State::Instance().activeFgOutput == FGOutput::XeFG)
-            fakenvapi::reportFGPresent(pSwapChain, fg != nullptr && fg->IsActive(), _frameCounter % 2);
+        {
+            auto fgIsActive = fg != nullptr && fg->IsActive() && !fg->IsPaused();
+            fakenvapi::reportFGPresent(pSwapChain, fgIsActive, _frameCounter % 2);
+        }
 
         _frameCounter++;
         State::Instance().frameCount = _frameCounter;
