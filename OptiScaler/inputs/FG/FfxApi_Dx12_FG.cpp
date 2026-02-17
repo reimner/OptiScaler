@@ -70,6 +70,9 @@ void CheckForFrame(IFGFeature_Dx12* fg, uint64_t frameId)
 {
     std::scoped_lock lock(_frameBoundaryMutex);
 
+    if (frameId == 0)
+        _currentFrameId = 0;
+
     if (frameId != 0 && frameId > _currentFrameId)
     {
         LOG_DEBUG("frameId: {} > _currentFrameId: {}", frameId, _currentFrameId);
