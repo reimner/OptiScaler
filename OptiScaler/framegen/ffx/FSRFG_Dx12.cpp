@@ -336,19 +336,21 @@ bool FSRFG_Dx12::Dispatch()
     ffxConfigureDescFrameGenerationSwapChainRegisterUiResourceDX12 uiDesc {};
     uiDesc.header.type = FFX_API_CONFIGURE_DESC_TYPE_FRAMEGENERATIONSWAPCHAIN_REGISTERUIRESOURCE_DX12;
 
-    auto uiColor = GetResource(FG_ResourceType::UIColor, fIndex);
+    // auto uiColor = GetResource(FG_ResourceType::UIColor, fIndex);
     auto hudless = GetResource(FG_ResourceType::HudlessColor, fIndex);
-    if (uiColor != nullptr && IsResourceReady(FG_ResourceType::UIColor, fIndex) &&
-        config->FGDrawUIOverFG.value_or_default())
-    {
-        LOG_TRACE("Using UI: {:X}", (size_t) uiColor->GetResource());
 
-        uiDesc.uiResource = ffxApiGetResourceDX12(uiColor->GetResource(), GetFfxApiState(uiColor->state));
+    // if (uiColor != nullptr && IsResourceReady(FG_ResourceType::UIColor, fIndex) &&
+    //     config->FGDrawUIOverFG.value_or_default())
+    //{
+    //     LOG_TRACE("Using UI: {:X}", (size_t) uiColor->GetResource());
 
-        if (config->FGUIPremultipliedAlpha.value_or_default())
-            uiDesc.flags = FFX_FRAMEGENERATION_UI_COMPOSITION_FLAG_USE_PREMUL_ALPHA;
-    }
-    else if (hudless != nullptr && IsResourceReady(FG_ResourceType::HudlessColor, fIndex))
+    //    uiDesc.uiResource = ffxApiGetResourceDX12(uiColor->GetResource(), GetFfxApiState(uiColor->state));
+
+    //    if (config->FGUIPremultipliedAlpha.value_or_default())
+    //        uiDesc.flags = FFX_FRAMEGENERATION_UI_COMPOSITION_FLAG_USE_PREMUL_ALPHA;
+    //}
+
+    if (hudless != nullptr && IsResourceReady(FG_ResourceType::HudlessColor, fIndex))
     {
         LOG_TRACE("Using hudless: {:X}", (size_t) hudless->GetResource());
 
@@ -1155,8 +1157,6 @@ void FSRFG_Dx12::EvaluateState(ID3D12Device* device, FG_Constants& fgConstants)
 
 void FSRFG_Dx12::ReleaseObjects()
 {
-    LOG_DEBUG("");
-
     for (size_t i = 0; i < BUFFER_COUNT; i++)
     {
         if (_fgCommandAllocator[i] != nullptr)
@@ -1170,8 +1170,34 @@ void FSRFG_Dx12::ReleaseObjects()
             _fgCommandList[i]->Release();
             _fgCommandList[i] = nullptr;
         }
+
+        if (_uiCommandAllocator[i] != nullptr)
+        {
+            _uiCommandAllocator[i]->Release();
+            _uiCommandAllocator[i] = nullptr;
+        }
+
+        if (_uiCommandList[i] != nullptr)
+        {
+            _uiCommandList[i]->Release();
+            _uiCommandList[i] = nullptr;
+        }
+
+        if (_scCommandAllocator[i] != nullptr)
+        {
+            _scCommandAllocator[i]->Release();
+            _scCommandAllocator[i] = nullptr;
+        }
+
+        if (_scCommandList[i] != nullptr)
+        {
+            _scCommandList[i]->Release();
+            _scCommandList[i] = nullptr;
+        }
     }
 
+    _renderUI.reset();
+    _hudlessCompare.reset();
     _mvFlip.reset();
     _depthFlip.reset();
 }
@@ -1190,8 +1216,11 @@ bool FSRFG_Dx12::ExecuteCommandList(int index)
 
 bool FSRFG_Dx12::SetResource(Dx12Resource* inputResource)
 {
-    if (inputResource == nullptr || inputResource->resource == nullptr || !IsActive() || IsPaused())
+    if (inputResource == nullptr || inputResource->resource == nullptr ||
+        (inputResource->type != FG_ResourceType::UIColor && (!IsActive() || IsPaused())))
+    {
         return false;
+    }
 
     // For late sent SL resources
     // we use provided frame index
@@ -1252,27 +1281,28 @@ bool FSRFG_Dx12::SetResource(Dx12Resource* inputResource)
 
     if (type == FG_ResourceType::UIColor)
     {
-        auto format = State::Instance().currentSwapchainDesc.BufferDesc.Format;
+        // auto format = State::Instance().currentSwapchainDesc.BufferDesc.Format;
 
-        auto uiFormat = (FfxApiSurfaceFormat) ffxApiGetSurfaceFormatDX12(fResource->GetResource()->GetDesc().Format);
-        auto scFormat = (FfxApiSurfaceFormat) ffxApiGetSurfaceFormatDX12(format);
+        // auto uiFormat = (FfxApiSurfaceFormat) ffxApiGetSurfaceFormatDX12(fResource->GetResource()->GetDesc().Format);
+        // auto scFormat = (FfxApiSurfaceFormat) ffxApiGetSurfaceFormatDX12(format);
 
-        if (uiFormat == -1 || scFormat == -1 || uiFormat != scFormat)
-        {
-            if (!UIFormatTransfer(fIndex, _device, GetUICommandList(fIndex), format, fResource))
-            {
-                LOG_WARN("Skipping UI resource due to format mismatch! UI: {}, swapchain: {}",
-                         magic_enum::enum_name(uiFormat), magic_enum::enum_name(scFormat));
+        // if (uiFormat == -1 || scFormat == -1 || uiFormat != scFormat)
+        //{
+        //     if (!UIFormatTransfer(fIndex, _device, GetUICommandList(fIndex), format, fResource))
+        //     {
+        //         LOG_WARN("Skipping UI resource due to format mismatch! UI: {}, swapchain: {}",
+        //                  magic_enum::enum_name(uiFormat), magic_enum::enum_name(scFormat));
 
-                _frameResources[fIndex][type] = {};
-                return false;
-            }
-            else
-            {
-                fResource->validity = FG_ResourceValidity::UntilPresent;
-            }
-        }
+        //        _frameResources[fIndex][type] = {};
+        //        return false;
+        //    }
+        //    else
+        //    {
+        //          fResource->validity = FG_ResourceValidity::UntilPresent;
+        //    }
+        //}
 
+        // fResource->validity = FG_ResourceValidity::UntilPresent;
         _noUi[fIndex] = false;
     }
     else if (type == FG_ResourceType::Distortion)
@@ -1429,6 +1459,36 @@ void FSRFG_Dx12::CreateObjects(ID3D12Device* InDevice)
                 LOG_ERROR("_uiCommandList[{}]->Close: {:X}", i, (unsigned long) result);
                 break;
             }
+
+            result =
+                InDevice->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&_scCommandAllocator[i]));
+            if (result != S_OK)
+            {
+                LOG_ERROR("CreateCommandAllocators _scCommandAllocator[{}]: {:X}", i, (unsigned long) result);
+                break;
+            }
+
+            _scCommandAllocator[i]->SetName(std::format(L"_scCommandAllocator[{}]", i).c_str());
+            if (CheckForRealObject(__FUNCTION__, _scCommandAllocator[i], (IUnknown**) &allocator))
+                _scCommandAllocator[i] = allocator;
+
+            result = InDevice->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, _scCommandAllocator[i], NULL,
+                                                 IID_PPV_ARGS(&_scCommandList[i]));
+            if (result != S_OK)
+            {
+                LOG_ERROR("CreateCommandList _hudlessCommandList[{}]: {:X}", i, (unsigned long) result);
+                break;
+            }
+            _scCommandList[i]->SetName(std::format(L"_scCommandList[{}]", i).c_str());
+            if (CheckForRealObject(__FUNCTION__, _scCommandList[i], (IUnknown**) &cmdList))
+                _scCommandList[i] = cmdList;
+
+            result = _scCommandList[i]->Close();
+            if (result != S_OK)
+            {
+                LOG_ERROR("_scCommandList[{}]->Close: {:X}", i, (unsigned long) result);
+                break;
+            }
         }
 
     } while (false);
@@ -1437,6 +1497,38 @@ void FSRFG_Dx12::CreateObjects(ID3D12Device* InDevice)
 bool FSRFG_Dx12::Present()
 {
     auto fIndex = GetIndexWillBeDispatched();
+
+    if (Config::Instance()->FGDrawUIOverFG.value_or_default())
+    {
+        auto ui = GetResource(FG_ResourceType::UIColor, fIndex);
+        if (ui != nullptr)
+        {
+            LOG_DEBUG("UI[{}] resource: {:X}, copy: {}", fIndex, (size_t) ui->resource, (size_t) ui->copy);
+            if (_renderUI.get() == nullptr)
+            {
+                _renderUI = std::make_unique<RUI_Dx12>("RenderUI", _device,
+                                                       Config::Instance()->FGUIPremultipliedAlpha.value_or_default());
+            }
+            else
+            {
+                if (Config::Instance()->FGUIPremultipliedAlpha.value_or_default() != _renderUI->IsPreMultipliedAlpha())
+                {
+                    LOG_INFO("UI premultiplied alpha changed, recreating RenderUI");
+                    _renderUI = std::make_unique<RUI_Dx12>(
+                        "RenderUI", _device, Config::Instance()->FGUIPremultipliedAlpha.value_or_default());
+                }
+                else if (_renderUI->IsInit())
+                {
+                    auto commandList = GetSCCommandList(fIndex);
+                    _renderUI->Dispatch((IDXGISwapChain3*) _swapChain, commandList, ui->GetResource(), ui->state);
+                }
+            }
+        }
+        else if (ui == nullptr)
+        {
+            LOG_WARN("UI resource is nullptr");
+        }
+    }
 
     if (IsActive() && !IsPaused() && State::Instance().FGHudlessCompare)
     {
@@ -1451,8 +1543,7 @@ bool FSRFG_Dx12::Present()
             {
                 if (_hudlessCompare->IsInit())
                 {
-                    auto commandList = GetUICommandList(fIndex);
-
+                    auto commandList = GetSCCommandList(fIndex);
                     _hudlessCompare->Dispatch((IDXGISwapChain3*) _swapChain, commandList, hudless->GetResource(),
                                               hudless->state);
                 }
@@ -1475,6 +1566,19 @@ bool FSRFG_Dx12::Present()
                 LOG_ERROR("_uiCommandList[{}]->Close() error: {:X}", fIndex, (UINT) closeResult);
 
             _uiCommandListResetted[fIndex] = false;
+        }
+
+        if (_scCommandListResetted[fIndex])
+        {
+            LOG_DEBUG("Executing _scCommandList[{}]: {:X}", fIndex, (size_t) _scCommandList[fIndex]);
+            auto closeResult = _scCommandList[fIndex]->Close();
+
+            if (closeResult == S_OK)
+                _gameCommandQueue->ExecuteCommandLists(1, (ID3D12CommandList**) &_scCommandList[fIndex]);
+            else
+                LOG_ERROR("_scCommandList[{}]->Close() error: {:X}", fIndex, (UINT) closeResult);
+
+            _scCommandListResetted[fIndex] = false;
         }
     }
 

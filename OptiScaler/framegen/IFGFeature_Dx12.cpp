@@ -101,6 +101,61 @@ ID3D12GraphicsCommandList* IFGFeature_Dx12::GetUICommandList(int index)
     return _uiCommandList[index];
 }
 
+ID3D12GraphicsCommandList* IFGFeature_Dx12::GetSCCommandList(int index)
+{
+    if (index < 0)
+        index = GetIndex();
+
+    LOG_DEBUG("index: {}", index);
+
+    if (_scCommandAllocator[0] == nullptr)
+    {
+        if (_device != nullptr)
+            CreateObjects(_device);
+        else if (State::Instance().currentD3D12Device != nullptr)
+            CreateObjects(State::Instance().currentD3D12Device);
+        else
+            return nullptr;
+    }
+
+    for (size_t j = 0; j < 2; j++)
+    {
+        auto i = (index + j) % BUFFER_COUNT;
+
+        if (i != index && _scCommandListResetted[i])
+        {
+            LOG_DEBUG("Executing _scCommandList[{}]: {:X}", i, (size_t) _scCommandList[i]);
+            auto closeResult = _scCommandList[i]->Close();
+
+            if (closeResult != S_OK)
+                LOG_ERROR("_scCommandList[{}]->Close() error: {:X}", i, (UINT) closeResult);
+
+            _scCommandListResetted[i] = false;
+        }
+    }
+
+    if (!_scCommandListResetted[index])
+    {
+        auto result = _scCommandAllocator[index]->Reset();
+
+        if (result == S_OK)
+        {
+            result = _scCommandList[index]->Reset(_scCommandAllocator[index], nullptr);
+
+            if (result == S_OK)
+                _scCommandListResetted[index] = true;
+            else
+                LOG_ERROR("_scCommandList[{}]->Reset() error: {:X}", index, (UINT) result);
+        }
+        else
+        {
+            LOG_ERROR("_scCommandAllocator[{}]->Reset() error: {:X}", index, (UINT) result);
+        }
+    }
+
+    return _scCommandList[index];
+}
+
 Dx12Resource* IFGFeature_Dx12::GetResource(FG_ResourceType type, int index)
 {
     if (index < 0)

@@ -6,6 +6,7 @@
 
 #include <shaders/resource_flip/RF_Dx12.h>
 #include <shaders/hudless_compare/HC_Dx12.h>
+#include <shaders/render_ui/RUI_Dx12.h>
 
 #include <dxgi1_6.h>
 #include <d3d12.h>
@@ -49,6 +50,10 @@ class IFGFeature_Dx12 : public virtual IFGFeature
     UINT64 _fgFramePresentId = 0;
     UINT64 _lastFGFramePresentId = 0;
 
+    ID3D12GraphicsCommandList* _scCommandList[BUFFER_COUNT] {};
+    ID3D12CommandAllocator* _scCommandAllocator[BUFFER_COUNT] {};
+    bool _scCommandListResetted[BUFFER_COUNT] { false, false, false, false };
+
     ID3D12GraphicsCommandList* _uiCommandList[BUFFER_COUNT] {};
     ID3D12CommandAllocator* _uiCommandAllocator[BUFFER_COUNT] {};
     bool _uiCommandListResetted[BUFFER_COUNT] { false, false, false, false };
@@ -60,6 +65,7 @@ class IFGFeature_Dx12 : public virtual IFGFeature
     std::unique_ptr<RF_Dx12> _mvFlip;
     std::unique_ptr<RF_Dx12> _depthFlip;
     std::unique_ptr<HC_Dx12> _hudlessCompare;
+    std::unique_ptr<RUI_Dx12> _renderUI;
 
     bool CreateBufferResource(ID3D12Device* InDevice, ID3D12Resource* InSource, D3D12_RESOURCE_STATES InState,
                               ID3D12Resource** OutResource, bool UAV = false, bool depth = false);
@@ -95,6 +101,7 @@ class IFGFeature_Dx12 : public virtual IFGFeature
     virtual void SetCommandQueue(FG_ResourceType type, ID3D12CommandQueue* queue) = 0;
 
     ID3D12GraphicsCommandList* GetUICommandList(int index = -1);
+    ID3D12GraphicsCommandList* GetSCCommandList(int index = -1);
 
     Dx12Resource* GetResource(FG_ResourceType type, int index = -1);
     bool GetResourceCopy(FG_ResourceType type, D3D12_RESOURCE_STATES bufferState, ID3D12Resource* output);

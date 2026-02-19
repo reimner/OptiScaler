@@ -310,7 +310,7 @@ bool XeFG_Dx12::CreateSwapchain(IDXGIFactory* factory, ID3D12CommandQueue* cmdQu
 
     xefg_swapchain_d3d12_init_params_t params {};
 
-    auto intTarget = _framesToInterpolate;
+    int intTarget = _framesToInterpolate;
 
     if (intTarget < 1 || intTarget > State::Instance().xefgMaxInterpolationCount)
     {
@@ -436,7 +436,7 @@ bool XeFG_Dx12::CreateSwapchain1(IDXGIFactory* factory, ID3D12CommandQueue* cmdQ
 
     xefg_swapchain_d3d12_init_params_t params {};
 
-    auto intTarget = _framesToInterpolate;
+    int intTarget = _framesToInterpolate;
 
     if (intTarget < 1 || intTarget > State::Instance().xefgMaxInterpolationCount)
     {
@@ -680,16 +680,16 @@ bool XeFG_Dx12::Dispatch()
         }
     }
 
-    if (!_noUi[fIndex])
-    {
-        auto res = &_frameResources[fIndex][FG_ResourceType::UIColor];
-        if (res->validity != FG_ResourceValidity::ValidNow)
-        {
-            res->validity = FG_ResourceValidity::UntilPresentFromDispatch;
-            res->frameIndex = fIndex;
-            SetResource(res);
-        }
-    }
+    // if (!_noUi[fIndex])
+    //{
+    //     auto res = &_frameResources[fIndex][FG_ResourceType::UIColor];
+    //     if (res->validity != FG_ResourceValidity::ValidNow)
+    //     {
+    //         res->validity = FG_ResourceValidity::UntilPresentFromDispatch;
+    //         res->frameIndex = fIndex;
+    //         SetResource(res);
+    //     }
+    // }
 
     if (!_noDistortionField[fIndex])
     {
@@ -936,6 +936,35 @@ void XeFG_Dx12::EvaluateState(ID3D12Device* device, FG_Constants& fgConstants)
 
 void XeFG_Dx12::ReleaseObjects()
 {
+    for (size_t i = 0; i < BUFFER_COUNT; i++)
+    {
+        if (_uiCommandAllocator[i] != nullptr)
+        {
+            _uiCommandAllocator[i]->Release();
+            _uiCommandAllocator[i] = nullptr;
+        }
+
+        if (_uiCommandList[i] != nullptr)
+        {
+            _uiCommandList[i]->Release();
+            _uiCommandList[i] = nullptr;
+        }
+
+        if (_scCommandAllocator[i] != nullptr)
+        {
+            _scCommandAllocator[i]->Release();
+            _scCommandAllocator[i] = nullptr;
+        }
+
+        if (_scCommandList[i] != nullptr)
+        {
+            _scCommandList[i]->Release();
+            _scCommandList[i] = nullptr;
+        }
+    }
+
+    _renderUI.reset();
+    _hudlessCompare.reset();
     _mvFlip.reset();
     _depthFlip.reset();
     _depthInvert.reset();
@@ -987,6 +1016,36 @@ void XeFG_Dx12::CreateObjects(ID3D12Device* InDevice)
                 LOG_ERROR("_uiCommandList[{}]->Close: {:X}", i, (unsigned long) result);
                 break;
             }
+
+            result =
+                InDevice->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&_scCommandAllocator[i]));
+            if (result != S_OK)
+            {
+                LOG_ERROR("CreateCommandAllocators _scCommandAllocator[{}]: {:X}", i, (unsigned long) result);
+                break;
+            }
+
+            _scCommandAllocator[i]->SetName(std::format(L"_scCommandAllocator[{}]", i).c_str());
+            if (CheckForRealObject(__FUNCTION__, _scCommandAllocator[i], (IUnknown**) &allocator))
+                _scCommandAllocator[i] = allocator;
+
+            result = InDevice->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, _scCommandAllocator[i], NULL,
+                                                 IID_PPV_ARGS(&_scCommandList[i]));
+            if (result != S_OK)
+            {
+                LOG_ERROR("CreateCommandList _hudlessCommandList[{}]: {:X}", i, (unsigned long) result);
+                break;
+            }
+            _scCommandList[i]->SetName(std::format(L"_scCommandList[{}]", i).c_str());
+            if (CheckForRealObject(__FUNCTION__, _scCommandList[i], (IUnknown**) &cmdList))
+                _scCommandList[i] = cmdList;
+
+            result = _scCommandList[i]->Close();
+            if (result != S_OK)
+            {
+                LOG_ERROR("_scCommandList[{}]->Close: {:X}", i, (unsigned long) result);
+                break;
+            }
         }
 
     } while (false);
@@ -997,33 +1056,69 @@ bool XeFG_Dx12::Present()
     auto fIndex = GetIndexWillBeDispatched();
     LOG_DEBUG("fIndex: {}", fIndex);
 
-    if (IsActive() && !IsPaused() && State::Instance().FGHudlessCompare)
+    if (Config::Instance()->FGDrawUIOverFG.value_or_default())
     {
-        auto hudless = GetResource(FG_ResourceType::HudlessColor, fIndex);
-        if (hudless != nullptr && (hudless->validity == FG_ResourceValidity::UntilPresent ||
-                                   hudless->validity == FG_ResourceValidity::JustTrackCmdlist ||
-                                   hudless->validity == FG_ResourceValidity::UntilPresentFromDispatch))
+        auto ui = GetResource(FG_ResourceType::UIColor, fIndex);
+        if (ui != nullptr && (ui->validity == FG_ResourceValidity::UntilPresent ||
+                              ui->validity == FG_ResourceValidity::JustTrackCmdlist ||
+                              ui->validity == FG_ResourceValidity::UntilPresentFromDispatch))
         {
-            LOG_DEBUG("Hudless[{}] resource: {:X}, copy: {}", fIndex, (size_t) hudless->resource,
-                      (size_t) hudless->copy);
-            if (_hudlessCompare.get() == nullptr)
+            LOG_DEBUG("UI[{}] resource: {:X}, copy: {}", fIndex, (size_t) ui->resource, (size_t) ui->copy);
+            if (_renderUI.get() == nullptr)
             {
-                _hudlessCompare = std::make_unique<HC_Dx12>("HudlessCompare", _device);
+                _renderUI = std::make_unique<RUI_Dx12>("RenderUI", _device,
+                                                       Config::Instance()->FGUIPremultipliedAlpha.value_or_default());
             }
             else
             {
-                if (_hudlessCompare->IsInit())
+                if (Config::Instance()->FGUIPremultipliedAlpha.value_or_default() != _renderUI->IsPreMultipliedAlpha())
                 {
-                    auto commandList = GetUICommandList(fIndex);
-
-                    _hudlessCompare->Dispatch((IDXGISwapChain3*) _swapChain, commandList, hudless->GetResource(),
-                                              hudless->state);
+                    LOG_INFO("UI premultiplied alpha changed, recreating RenderUI");
+                    _renderUI = std::make_unique<RUI_Dx12>(
+                        "RenderUI", _device, Config::Instance()->FGUIPremultipliedAlpha.value_or_default());
+                }
+                else if (_renderUI->IsInit())
+                {
+                    auto commandList = GetSCCommandList(fIndex);
+                    _renderUI->Dispatch((IDXGISwapChain3*) _swapChain, commandList, ui->GetResource(), ui->state);
                 }
             }
         }
-        else if (hudless == nullptr)
+        else if (ui == nullptr)
         {
-            LOG_WARN("Hudless resource is nullptr");
+            LOG_WARN("UI resource is nullptr");
+        }
+    }
+
+    if (IsActive() && !IsPaused())
+    {
+        if (State::Instance().FGHudlessCompare)
+        {
+            auto hudless = GetResource(FG_ResourceType::HudlessColor, fIndex);
+            if (hudless != nullptr && (hudless->validity == FG_ResourceValidity::UntilPresent ||
+                                       hudless->validity == FG_ResourceValidity::JustTrackCmdlist ||
+                                       hudless->validity == FG_ResourceValidity::UntilPresentFromDispatch))
+            {
+                LOG_DEBUG("Hudless[{}] resource: {:X}, copy: {}", fIndex, (size_t) hudless->resource,
+                          (size_t) hudless->copy);
+                if (_hudlessCompare.get() == nullptr)
+                {
+                    _hudlessCompare = std::make_unique<HC_Dx12>("HudlessCompare", _device);
+                }
+                else
+                {
+                    if (_hudlessCompare->IsInit())
+                    {
+                        auto commandList = GetSCCommandList(fIndex);
+                        _hudlessCompare->Dispatch((IDXGISwapChain3*) _swapChain, commandList, hudless->GetResource(),
+                                                  hudless->state);
+                    }
+                }
+            }
+            else if (hudless == nullptr)
+            {
+                LOG_WARN("Hudless resource is nullptr");
+            }
         }
     }
 
@@ -1043,6 +1138,19 @@ bool XeFG_Dx12::Present()
 
             _uiCommandListResetted[fIndex] = false;
         }
+
+        if (_scCommandListResetted[fIndex])
+        {
+            LOG_DEBUG("Executing _scCommandList[{}]: {:X}", fIndex, (size_t) _scCommandList[fIndex]);
+            auto closeResult = _scCommandList[fIndex]->Close();
+
+            if (closeResult == S_OK)
+                _gameCommandQueue->ExecuteCommandLists(1, (ID3D12CommandList**) &_scCommandList[fIndex]);
+            else
+                LOG_ERROR("_scCommandList[{}]->Close() error: {:X}", fIndex, (UINT) closeResult);
+
+            _scCommandListResetted[fIndex] = false;
+        }
     }
 
     if ((_fgFramePresentId - _lastFGFramePresentId) > 3 && IsActive() && !_waitingNewFrameData)
@@ -1060,8 +1168,11 @@ bool XeFG_Dx12::Present()
 
 bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
 {
-    if (inputResource == nullptr || inputResource->resource == nullptr || !IsActive() || IsPaused())
+    if (inputResource == nullptr || inputResource->resource == nullptr ||
+        (inputResource->type != FG_ResourceType::UIColor && (!IsActive() || IsPaused())))
+    {
         return false;
+    }
 
     // For late sent SL resources
     // we use provided frame index
@@ -1094,6 +1205,9 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
     {
         if (Config::Instance()->FGDisableUI.value_or_default())
             return false;
+
+        if (Config::Instance()->FGDrawUIOverFG.value_or_default())
+            inputResource->validity = FG_ResourceValidity::ValidButMakeCopy;
 
         if (!_noUi[fIndex] && (_frameResources[fIndex][type].validity == FG_ResourceValidity::ValidNow))
         {

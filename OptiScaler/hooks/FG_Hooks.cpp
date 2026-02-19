@@ -914,22 +914,6 @@ HRESULT FGHooks::FGPresent(void* This, UINT SyncInterval, UINT Flags, const DXGI
         Hudfix_Dx12::PresentStart();
     }
 
-    if (willPresent && fg != nullptr && fg->IsUsingUI() && Config::Instance()->FGDrawUIOverFG.value_or_default())
-    {
-        ID3D12Resource* backBuffer = nullptr;
-        auto swapchain = ((IDXGISwapChain3*) This);
-        auto swapchainIndex = swapchain->GetCurrentBackBufferIndex();
-
-        if (swapchain->GetBuffer(swapchainIndex, IID_PPV_ARGS(&backBuffer)) == S_OK)
-        {
-            auto result = fg->GetResourceCopy(FG_ResourceType::HudlessColor, D3D12_RESOURCE_STATE_PRESENT, backBuffer);
-            backBuffer->Release();
-
-            if (!result)
-                LOG_WARN("Couldn't copy hudless into the backbuffer");
-        }
-    }
-
     if (willPresent && Config::Instance()->ForceVsync.has_value())
     {
         LOG_DEBUG("ForceVsync: {}, VsyncInterval: {}, SCAllowTearing: {}, realExclusiveFullscreen: {}",
